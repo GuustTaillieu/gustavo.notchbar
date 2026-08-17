@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "gustavo.bar",
+  "name": "Gustavo Island Bar",
+  "version": "1.0.0",
+  "author": "Gustavo",
+  "description": "Tide-Island style floating dynamic status bar with auto-hide",
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Bar.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.bar"
+  }
+}
