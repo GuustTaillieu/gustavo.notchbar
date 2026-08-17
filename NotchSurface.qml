@@ -7,9 +7,9 @@ Item {
   property real radius: 8
   property real contentWidth: 100
   property real contentHeight: 32
-  property color color: Qt.rgba(0.1, 0.1, 0.12, 0.95)
-  property color borderColor: "transparent"
-  property real borderWidth: 0
+  property color color: Qt.rgba(0.1, 0.1, 0.12, 0.50)
+  property color borderColor: Qt.rgba(1, 1, 1, 0.18)
+  property real borderWidth: 1
   property bool shadowEnabled: true
 
   // Total notch width is content width + 2 outer fillet wings
@@ -22,9 +22,9 @@ Item {
   Shape {
     id: shadowShape
     anchors.fill: parent
-    anchors.topMargin: 2
+    anchors.topMargin: 3
     visible: notch.shadowEnabled
-    opacity: 0.3
+    opacity: 0.35
     z: -1
     layer.enabled: true
     layer.samples: 4
@@ -33,7 +33,7 @@ Item {
     ShapePath {
       strokeColor: "transparent"
       strokeWidth: 0
-      fillColor: Qt.rgba(0, 0, 0, 0.5)
+      fillColor: Qt.rgba(0, 0, 0, 0.55)
 
       startX: 0
       startY: 0
@@ -96,7 +96,7 @@ Item {
     }
   }
 
-  // 2. Main Fill Shape
+  // 2. Translucent Frosted Glass Base Fill
   Shape {
     id: fillShape
     anchors.fill: parent
@@ -177,7 +177,7 @@ Item {
       }
     }
 
-    // 3. Optional Stroke Path (if borderWidth > 0)
+    // 3. Glass Refraction Rim / Optical Border
     ShapePath {
       strokeColor: notch.borderWidth > 0 ? notch.borderColor : "transparent"
       strokeWidth: notch.borderWidth
@@ -239,4 +239,5 @@ Item {
       }
     }
   }
+
 }

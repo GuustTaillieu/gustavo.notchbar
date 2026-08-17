@@ -13,6 +13,9 @@ Item {
 
   property var root: null
   property var barWindow: null
+  property Component centerModulesComponent: null
+  property Item centerModulesItem: null
+  readonly property real centerModulesWidth: centerModulesItem ? Math.ceil(centerModulesItem.implicitWidth) : 0
 
   readonly property bool isSearchOpen: root ? root.isSearchOpen : false
   readonly property color islandForeground: (root && root.barForeground) ? root.barForeground : Color.bar.text
@@ -28,27 +31,58 @@ Item {
     if (root) root.isSearchOpen = true
   }
 
-  function closeSearch() {
-    if (root) root.isSearchOpen = false
+  property bool isMediaOpen: false
+
+  function toggleMedia() {
+    if (hasActiveMedia) {
+      isMediaOpen = !isMediaOpen
+    }
   }
 
-  readonly property bool isHovered: islandHoverHandler.hovered || hoverHoldTimer.running
+  DragHandler {
+    id: pullDownHandler
+    target: null
+    xAxis.enabled: false
+    yAxis.minimum: -50
+    yAxis.maximum: 100
+    onActiveChanged: {
+      if (!active) {
+        var dy = centroid.position.y - centroid.pressPosition.y
+        if (dy > 12) {
+          // Swiped down -> Pull down media player
+          if (hasActiveMedia) {
+            centerIsland.isMediaOpen = true
+          }
+        } else if (dy < -12) {
+          // Swiped up -> Collapse media player
+          centerIsland.isMediaOpen = false
+        }
+      }
+    }
+  }
+
+  readonly property bool isHovered: islandHoverHandler.hovered
 
   HoverHandler {
     id: islandHoverHandler
     onHoveredChanged: {
       if (hovered) {
-        hoverHoldTimer.stop()
+        mediaLeaveTimer.stop()
       } else {
-        hoverHoldTimer.restart()
+        if (isMediaOpen) {
+          mediaLeaveTimer.restart()
+        }
       }
     }
   }
 
   Timer {
-    id: hoverHoldTimer
-    interval: 800
+    id: mediaLeaveTimer
+    interval: 1500
     repeat: false
+    onTriggered: {
+      centerIsland.isMediaOpen = false
+    }
   }
 
   property bool isNotificationActive: notificationTimer.running
@@ -320,10 +354,7 @@ Item {
     if (centerIsland.isSearchOpen) return "search"
     if (isOsdActive && osdMode !== "") return osdMode
     if (isNotificationActive && currentNotification) return "notification"
-    if (isHovered) {
-      if (hasActiveMedia) return "media"
-      return "date-clock"
-    }
+    if (isMediaOpen && hasActiveMedia) return "media"
     return "clock"
   }
 
@@ -335,8 +366,8 @@ Item {
       case "brightness": return 300
       case "notification": return 400
       case "media": return 440
-      case "date-clock": return 230
-      case "clock": default: return 100
+      case "date-clock": return Math.max(230, centerModulesWidth + 24)
+      case "clock": default: return Math.max(90, (centerModulesWidth > 0 ? centerModulesWidth : 70) + 20)
     }
   }
 
@@ -412,8 +443,8 @@ Item {
   NotchSurface {
     id: notchSurface
     radius: 8
-    color: (root && root.transparent) ? Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.96) : Color.bar.background
-    borderColor: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.10)
+    color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
+    borderColor: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
     borderWidth: 1
     contentWidth: centerIsland.targetContentWidth
     contentHeight: centerIsland.targetContentHeight
@@ -435,7 +466,7 @@ Item {
       width: notchSurface.contentWidth
       clip: true
 
-      // ------------------------------------------------------------- Mode 1: Compact Clock (Idle)
+      // ------------------------------------------------------------- Mode 1: Compact Clock & Center Modules (Idle)
       Item {
         id: clockView
         anchors.fill: parent
@@ -446,21 +477,37 @@ Item {
           NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
         }
 
-        Text {
-          id: clockText
+        Row {
+          id: idleRow
           anchors.centerIn: parent
-          text: Qt.formatTime(new Date(), "HH:mm")
-          font.family: Style.font.family
-          font.pixelSize: Style.font.title
-          font.weight: Font.DemiBold
-          color: centerIsland.islandForeground
+          spacing: 6
+
+          Loader {
+            id: centerModulesLoader
+            anchors.verticalCenter: parent.verticalCenter
+            sourceComponent: centerIsland.centerModulesComponent
+            onLoaded: {
+              centerIsland.centerModulesItem = item
+            }
+          }
+
+          Text {
+            id: fallbackClockText
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !centerModulesLoader.item || centerModulesLoader.item.implicitWidth <= 0
+            text: Qt.formatTime(new Date(), "HH:mm")
+            font.family: Style.font.family
+            font.pixelSize: Style.font.title
+            font.weight: Font.DemiBold
+            color: centerIsland.islandForeground
+          }
         }
 
         Timer {
           interval: 1000
-          running: true
+          running: fallbackClockText.visible
           repeat: true
-          onTriggered: clockText.text = Qt.formatTime(new Date(), "HH:mm")
+          onTriggered: fallbackClockText.text = Qt.formatTime(new Date(), "HH:mm")
         }
       }
 
@@ -1170,6 +1217,20 @@ Item {
     z: -1
 
     onWheel: function(wheel) {
+      if (centerIsland.currentMode === "media") {
+        if (wheel.angleDelta.y > 0) {
+          // Swiping up over expanded media player collapses it
+          centerIsland.isMediaOpen = false
+          return
+        }
+      }
+
+      if (centerIsland.currentMode === "clock" && wheel.angleDelta.y < 0 && centerIsland.hasActiveMedia) {
+        // Swiping down over idle middle island pulls down media player
+        centerIsland.isMediaOpen = true
+        return
+      }
+
       if (centerIsland.currentMode === "brightness") {
         if (wheel.angleDelta.y > 0) {
           brightnessSetProc.command = ["brightnessctl", "set", "5%+"]

@@ -1110,8 +1110,8 @@ Item {
       anchors.leftMargin: 8
       anchors.top: parent.top
       radius: 8
-      color: root.transparent ? Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.94) : Color.bar.background
-      borderColor: Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.10)
+      color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
+      borderColor: Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.18)
       borderWidth: 1
       contentWidth: Math.max(60, leftModules.implicitWidth + Style.space(12))
       contentHeight: root.islandHeight
@@ -1141,8 +1141,8 @@ Item {
       anchors.rightMargin: 8
       anchors.top: parent.top
       radius: 8
-      color: root.transparent ? Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.94) : Color.bar.background
-      borderColor: Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.10)
+      color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
+      borderColor: Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.18)
       borderWidth: 1
       contentWidth: Math.max(60, rightModules.implicitWidth + Style.space(12))
       contentHeight: root.islandHeight
@@ -1270,6 +1270,10 @@ Item {
       barWindow: centerWindow
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
+
+      centerModulesComponent: Component {
+        CenterModules {}
+      }
 
       Component.onCompleted: {
         if (centerWindow.barPluginRoot) centerWindow.barPluginRoot.centerIslandRef = centerIslandItem
