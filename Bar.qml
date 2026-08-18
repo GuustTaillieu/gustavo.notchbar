@@ -654,6 +654,160 @@ Item {
     return source ? Util.fileUrl(source) : ""
   }
 
+  property var currentNotification: null
+  readonly property var notifService: shell ? shell.serviceFor("omarchy.notifications") : null
+  readonly property var notifPopupModel: notifService ? notifService.popupModel : null
+
+  Connections {
+    target: root.notifPopupModel
+    ignoreUnknownSignals: true
+    function onRowsInserted(parent, first, last) {
+      for (var i = first; i <= last; i++) {
+        var item = root.notifPopupModel.get(i)
+        if (item) {
+          root.showNotificationData(item)
+        }
+      }
+      // Immediately clear popupModel in the same tick so top-right window never renders
+      root.notifPopupModel.clear()
+    }
+  }
+
+  function showNotificationData(data) {
+    if (!data) return
+    root.currentNotification = {
+      id: data.id || 0,
+      originalId: data.originalId || 0,
+      app: data.app || data.appName || "",
+      appName: data.app || data.appName || "",
+      appIcon: data.appIcon || "",
+      summary: data.summary || "",
+      body: data.body || "",
+      image: data.image || "",
+      glyph: data.glyph || "",
+      exec: data.exec || "",
+      expireTimeout: data.expireTimeout || 0
+    }
+
+    var expireMs = Number(data.expireTimeout || 0)
+    if (!isFinite(expireMs) || expireMs <= 0) expireMs = 5000
+    else expireMs = Math.min(30000, Math.max(3000, expireMs))
+    rootNotificationTimer.interval = expireMs
+    rootNotificationTimer.restart()
+  }
+
+  function resolveNotificationIcon(notif) {
+    if (!notif) return ""
+    function formatUrl(pathOrUrl) {
+      var s = String(pathOrUrl || "")
+      if (!s) return ""
+      if (s.indexOf("file://") === 0 || s.indexOf("image://") === 0) return s
+      if (s.charAt(0) === "/") return Util.fileUrl(s)
+      return s
+    }
+
+    var img = String(notif.image || "")
+    if (img.length > 0) return formatUrl(img)
+
+    var appIcon = String(notif.appIcon || "")
+    if (appIcon.length > 0) {
+      if (appIcon.indexOf("file://") === 0 || appIcon.indexOf("image://") === 0 || appIcon.charAt(0) === "/") {
+        return formatUrl(appIcon)
+      }
+      var themed = Quickshell.iconPath(appIcon, true)
+      if (themed && themed.length > 0) return formatUrl(themed)
+    }
+
+    var appName = String(notif.appName || notif.app || "")
+    if (appName.length > 0 && appName !== "notify-send" && appName !== "omarchy-action") {
+      var appThemed = Quickshell.iconPath(appName.toLowerCase(), true)
+      if (appThemed && appThemed.length > 0) return formatUrl(appThemed)
+      if (root.shell && root.shell.appLibrary) {
+        var libIcon = root.shell.appLibrary.iconSource(appName.toLowerCase())
+        if (libIcon && libIcon.length > 0) return formatUrl(libIcon)
+      }
+    }
+
+    var summaryName = String(notif.summary || "")
+    if (summaryName.length > 0) {
+      var summaryThemed = Quickshell.iconPath(summaryName.toLowerCase(), true)
+      if (summaryThemed && summaryThemed.length > 0) return formatUrl(summaryThemed)
+    }
+    return ""
+  }
+
+  function resolveNotificationGlyph(notif) {
+    if (!notif) return ""
+    if (notif.glyph) return String(notif.glyph)
+    try {
+      if (notif.hints && notif.hints["omarchy-glyph"]) return String(notif.hints["omarchy-glyph"])
+    } catch (e) {}
+    return ""
+  }
+
+  function handleNotificationClick(isRightClick) {
+    if (isRightClick) {
+      dismissNotification()
+    } else {
+      invokeNotificationAction()
+    }
+  }
+
+  function invokeNotificationAction() {
+    var notif = root.currentNotification
+    if (!notif) return
+
+    var execCmd = String(notif.exec || "")
+    if (execCmd) {
+      Util.execDetached(execCmd)
+      dismissNotification()
+      return
+    }
+
+    var invoked = false
+    try {
+      if (root.notifService && root.notifService.liveRefs) {
+        var live = root.notifService.liveRefs[notif.originalId]
+        if (live && live.actions && live.actions.length > 0) {
+          for (var a = 0; a < live.actions.length; a++) {
+            var act = live.actions[a]
+            if (act && (act.identifier === "default" || a === 0)) {
+              if (typeof act.invoke === "function") {
+                act.invoke()
+                invoked = true
+                break
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Notification action invoke error:", e)
+    }
+
+    if (!invoked) {
+      var app = String(notif.appName || notif.app || "")
+      if (app && app !== "notify-send" && app !== "omarchy-action") {
+        var path = root.omarchyPath || "/usr/share/omarchy"
+        Util.execDetached(path + "/bin/omarchy-hyprland-focus-app " + app)
+      }
+    }
+
+    dismissNotification()
+  }
+
+  function dismissNotification() {
+    rootNotificationTimer.stop()
+    root.currentNotification = null
+  }
+
+  Timer {
+    id: rootNotificationTimer
+    interval: 5000
+    repeat: false
+    onTriggered: root.dismissNotification()
+  }
+
   Component.onCompleted: applyBarConfig()
 
   // Revealing the indicators widens their section, which can slide a neighbour

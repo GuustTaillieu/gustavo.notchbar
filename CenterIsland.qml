@@ -85,8 +85,8 @@ Item {
     }
   }
 
-  property bool isNotificationActive: notificationTimer.running
-  property var currentNotification: null
+  readonly property var currentNotification: root ? root.currentNotification : null
+  readonly property bool isNotificationActive: currentNotification !== null
 
   // Volume & Audio tracking
   readonly property var sink: Pipewire.defaultAudioSink
@@ -388,56 +388,16 @@ Item {
   width: implicitWidth
   height: implicitHeight
 
-  // Polling process for notifications
-  Process {
-    id: notificationCheckProc
-    command: ["bash", "-c", "find " + (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications -maxdepth 1 -name '*.json' 2>/dev/null | head -n1"]
-    stdout: SplitParser {
-      onRead: function(line) {
-        var p = String(line).trim()
-        if (p && p.endsWith(".json")) {
-          loadNotificationFile(p)
-        }
-      }
-    }
+  function resolveIconSource(notif) {
+    return root ? root.resolveNotificationIcon(notif) : ""
   }
 
-  Timer {
-    interval: 1000
-    repeat: true
-    running: true
-    onTriggered: {
-      if (!notificationCheckProc.running) {
-        notificationCheckProc.running = true
-      }
-    }
+  function resolveGlyph(notif) {
+    return root ? root.resolveNotificationGlyph(notif) : ""
   }
 
-  FileView {
-    id: notificationFileReader
-    onLoaded: {
-      try {
-        var data = JSON.parse(text())
-        if (data && (data.summary || data.body)) {
-          centerIsland.currentNotification = data
-          notificationTimer.restart()
-        }
-      } catch (e) {}
-    }
-  }
-
-  function loadNotificationFile(filePath) {
-    notificationFileReader.path = filePath
-    notificationFileReader.reload()
-  }
-
-  Timer {
-    id: notificationTimer
-    interval: 5000
-    repeat: false
-    onTriggered: {
-      centerIsland.currentNotification = null
-    }
+  function handleNotificationClick(isRightClick) {
+    if (root) root.handleNotificationClick(isRightClick)
   }
 
   NotchSurface {
@@ -901,14 +861,42 @@ Item {
           anchors.fill: parent
           spacing: Style.space(12)
 
+          // Dynamic Icon Box
           Rectangle {
             Layout.preferredWidth: 38
             Layout.preferredHeight: 38
-            radius: 19
+            radius: 10
             color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15)
+            clip: true
+
+            readonly property string iconSrc: centerIsland.resolveIconSource(centerIsland.currentNotification)
+            readonly property string glyphText: centerIsland.resolveGlyph(centerIsland.currentNotification)
+
+            Image {
+              id: notifImg
+              anchors.fill: parent
+              anchors.margins: 4
+              source: parent.iconSrc ? parent.iconSrc : ""
+              sourceSize.width: 32 * Screen.devicePixelRatio
+              sourceSize.height: 32 * Screen.devicePixelRatio
+              fillMode: Image.PreserveAspectFit
+              asynchronous: true
+              smooth: true
+              visible: parent.iconSrc !== "" && status === Image.Ready
+            }
 
             Text {
               anchors.centerIn: parent
+              visible: !notifImg.visible && parent.glyphText !== ""
+              text: parent.glyphText
+              font.family: Style.font.family
+              font.pixelSize: 18
+              color: centerIsland.islandForeground
+            }
+
+            Text {
+              anchors.centerIn: parent
+              visible: !notifImg.visible && parent.glyphText === ""
               text: "💬"
               font.pixelSize: 18
             }
@@ -916,15 +904,16 @@ Item {
 
           ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: 1
 
             Text {
               Layout.fillWidth: true
               text: centerIsland.currentNotification ? (centerIsland.currentNotification.appName || "") : ""
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
-              color: centerIsland.islandForeground
-              opacity: 0.6
+              font.weight: Font.DemiBold
+              color: Color.accent || centerIsland.islandForeground
+              opacity: 0.85
               elide: Text.ElideRight
               visible: text !== ""
             }
@@ -937,6 +926,7 @@ Item {
               font.weight: Font.Bold
               color: centerIsland.islandForeground
               elide: Text.ElideRight
+              maximumLineCount: 1
             }
 
             Text {
@@ -947,6 +937,7 @@ Item {
               color: centerIsland.islandForeground
               opacity: 0.8
               elide: Text.ElideRight
+              maximumLineCount: 1
               visible: text !== ""
             }
           }
@@ -954,9 +945,11 @@ Item {
 
         MouseArea {
           anchors.fill: parent
-          onClicked: {
-            notificationTimer.stop()
-            centerIsland.currentNotification = null
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          acceptedButtons: Qt.LeftButton | Qt.RightButton
+          onClicked: function(mouse) {
+            centerIsland.handleNotificationClick(mouse.button === Qt.RightButton)
           }
         }
       }
