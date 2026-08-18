@@ -1245,10 +1245,12 @@ Item {
 
     anchors {
       top: true
-      bottom: true
+      bottom: centerWindow.isSearchOpen
       left: true
       right: true
     }
+
+    implicitHeight: centerWindow.isSearchOpen ? (screen ? screen.height : 0) : centerIslandItem.height
 
     // Full screen click-outside dismissal scrim when search is open
     MouseArea {
