@@ -706,6 +706,40 @@ Item {
     }
   }
 
+  readonly property var osdLoader: (shell && shell.panelLoaders) ? shell.panelLoaders["omarchy.osd"] : null
+  readonly property var osdItem: osdLoader ? osdLoader.item : null
+
+  Connections {
+    target: root.osdItem
+    ignoreUnknownSignals: true
+    function onOpenedChanged() {
+      if (root.osdItem && root.osdItem.opened) {
+        var key = root.osdItem.iconKey || ""
+        var msg = root.osdItem.message || ""
+        var val = root.osdItem.value
+        var maxV = root.osdItem.maxValue || 100
+        var prog = root.osdItem.hasProgress
+        var med = root.osdItem.mediaOsd
+        var ic = root.osdItem.icon || ""
+
+        // Instantly suppress default center popup so it never renders
+        root.osdItem.opened = false
+
+        if (root.centerIslandRef && typeof root.centerIslandRef.handleExternalOsd === "function") {
+          root.centerIslandRef.handleExternalOsd({
+            iconKey: key,
+            message: msg,
+            value: val,
+            maxValue: maxV,
+            hasProgress: prog,
+            mediaOsd: med,
+            icon: ic
+          })
+        }
+      }
+    }
+  }
+
   Connections {
     target: root.notifPopupModel
     ignoreUnknownSignals: true

@@ -137,34 +137,69 @@ Item {
 
   Process {
     id: brightnessSetProc
-  }
-
-  Timer {
-    interval: 1500
-    repeat: true
-    running: true
-    onTriggered: {
+    onExited: {
       if (!brightnessQueryProc.running) brightnessQueryProc.running = true
     }
   }
 
-  // OSD mode management
-  property string osdMode: "" // "volume" | "brightness"
+  // OSD mode management: "volume" | "brightness" | "media-action"
+  property string osdMode: ""
   property bool isOsdActive: osdTimer.running
+  property string mediaOsdMessage: ""
+  property string mediaOsdIcon: "󰐊"
 
   function triggerOsd(mode) {
-    if (centerIsland.isSearchOpen) return
+    if (centerIsland.isSearchOpen || centerIsland.isHistoryOpen) return
     osdMode = mode
     osdTimer.restart()
   }
 
+  function handleExternalOsd(data) {
+    if (!data || centerIsland.isSearchOpen || centerIsland.isHistoryOpen) return
+    var key = String(data.iconKey || "").toLowerCase()
+    var msg = String(data.message || "")
+    var val = data.value
+    var prog = data.hasProgress
+    var med = data.mediaOsd
+
+    if (key.indexOf("brightness") !== -1 || key.indexOf("display") !== -1) {
+      if (val !== undefined && val !== null && !isNaN(val)) {
+        centerIsland.currentBrightness = Math.min(100, Math.max(0, parseInt(val, 10)))
+      }
+      centerIsland.triggerOsd("brightness")
+    } else if (key.indexOf("volume") !== -1 || key.indexOf("audio") !== -1 || (prog && !med)) {
+      centerIsland.triggerOsd("volume")
+    } else if (med || key.indexOf("media") !== -1 || key.indexOf("player") !== -1) {
+      var glyph = "󰐊"
+      if (key.indexOf("pause") !== -1) glyph = "󰏤"
+      else if (key.indexOf("play") !== -1) glyph = "󰐊"
+      else if (key.indexOf("next") !== -1) glyph = "󰒭"
+      else if (key.indexOf("prev") !== -1) glyph = "󰒮"
+      else if (key.indexOf("stop") !== -1) glyph = "󰓛"
+      else if (key.indexOf("source") !== -1) glyph = "󰎆"
+      else if (data.icon) glyph = data.icon
+
+      mediaOsdIcon = glyph
+      mediaOsdMessage = msg
+      centerIsland.triggerOsd("media-action")
+    } else {
+      mediaOsdIcon = data.icon || "󰒓"
+      mediaOsdMessage = msg
+      centerIsland.triggerOsd("media-action")
+    }
+  }
+
   Timer {
     id: osdTimer
-    interval: 1800
+    interval: 1600
     repeat: false
     onTriggered: {
       centerIsland.osdMode = ""
     }
+  }
+
+  Component.onCompleted: {
+    brightnessQueryProc.running = true
   }
 
   function isDedicatedMusicPlayer(player) {
@@ -222,7 +257,54 @@ Item {
 
     return mprisPlayers[0] || null
   }
+
   readonly property bool hasActiveMedia: activePlayer !== null && (activePlayer.trackTitle !== "" || activePlayer.trackArtist !== "")
+
+  property bool mediaInitialized: false
+  property string lastObservedTrackTitle: ""
+  property var lastObservedPlaybackState: null
+
+  Connections {
+    target: centerIsland.activePlayer
+    ignoreUnknownSignals: true
+
+    function onPlaybackStateChanged() {
+      if (!centerIsland.activePlayer) return
+      if (!centerIsland.mediaInitialized) {
+        centerIsland.lastObservedPlaybackState = centerIsland.activePlayer.playbackState
+        centerIsland.lastObservedTrackTitle = centerIsland.activePlayer.trackTitle || ""
+        centerIsland.mediaInitialized = true
+        return
+      }
+
+      var st = centerIsland.activePlayer.playbackState
+      if (st !== centerIsland.lastObservedPlaybackState) {
+        centerIsland.lastObservedPlaybackState = st
+        var isPl = (st === MprisPlaybackState.Playing)
+        centerIsland.mediaOsdIcon = isPl ? "󰐊" : "󰏤"
+        var track = (centerIsland.activePlayer.trackTitle || "") + (centerIsland.activePlayer.trackArtist ? " • " + centerIsland.activePlayer.trackArtist : "")
+        centerIsland.mediaOsdMessage = (isPl ? "Playing" : "Paused") + (track ? " • " + track : "")
+        centerIsland.triggerOsd("media-action")
+      }
+    }
+
+    function onTrackTitleChanged() {
+      if (!centerIsland.activePlayer) return
+      var t = centerIsland.activePlayer.trackTitle || ""
+      if (!centerIsland.mediaInitialized) {
+        centerIsland.lastObservedTrackTitle = t
+        centerIsland.mediaInitialized = true
+        return
+      }
+      if (t !== "" && t !== centerIsland.lastObservedTrackTitle) {
+        centerIsland.lastObservedTrackTitle = t
+        centerIsland.mediaOsdIcon = "󰒭"
+        var track = t + (centerIsland.activePlayer.trackArtist ? " • " + centerIsland.activePlayer.trackArtist : "")
+        centerIsland.mediaOsdMessage = track
+        centerIsland.triggerOsd("media-action")
+      }
+    }
+  }
 
   // ------------------------------------------------------------- Menu Model & Search Integration
   property string defaultMenuPath: (root && root.omarchyPath ? root.omarchyPath : "/usr/share/omarchy") + "/default/omarchy/omarchy-menu.jsonc"
@@ -371,6 +453,7 @@ Item {
       case "history": return 480
       case "volume":
       case "brightness": return 300
+      case "media-action": return Math.min(360, Math.max(180, mediaActionRow.implicitWidth + 32))
       case "notification": return 400
       case "media": return 440
       case "date-clock": return Math.max(230, centerModulesWidth + 24)
@@ -383,7 +466,8 @@ Item {
       case "search": return 420
       case "history": return 400
       case "volume":
-      case "brightness": return 36
+      case "brightness":
+      case "media-action": return 36
       case "notification": return 68
       case "media": return 80
       case "date-clock": return 40
@@ -905,6 +989,44 @@ Item {
             font.pixelSize: Style.font.caption
             font.weight: Font.Bold
             color: centerIsland.islandForeground
+          }
+        }
+      }
+
+      // ------------------------------------------------------------- Mode 5.5: Media Action / Playback Status Pill
+      Item {
+        id: mediaActionView
+        anchors.fill: parent
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        visible: opacity > 0.01
+        opacity: centerIsland.currentMode === "media-action" ? 1.0 : 0.0
+
+        Behavior on opacity {
+          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+        }
+
+        RowLayout {
+          id: mediaActionRow
+          anchors.fill: parent
+          spacing: Style.space(10)
+
+          Text {
+            text: centerIsland.mediaOsdIcon
+            font.family: Style.font.family
+            font.pixelSize: 16
+            color: Color.accent || centerIsland.islandForeground
+          }
+
+          Text {
+            Layout.fillWidth: true
+            text: centerIsland.mediaOsdMessage || (centerIsland.hasActiveMedia ? ((centerIsland.activePlayer.trackTitle || "") + (centerIsland.activePlayer.trackArtist ? " • " + centerIsland.activePlayer.trackArtist : "")) : "")
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            font.weight: Font.DemiBold
+            color: centerIsland.islandForeground
+            elide: Text.ElideRight
+            maximumLineCount: 1
           }
         }
       }
