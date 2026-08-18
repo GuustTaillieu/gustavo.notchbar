@@ -1489,10 +1489,12 @@ Item {
 
     anchors {
       top: true
-      bottom: true
+      bottom: centerWindow.isExpanded
       left: true
       right: true
     }
+
+    implicitHeight: centerWindow.isExpanded ? (screen ? screen.height : 0) : Math.ceil(centerIslandItem.implicitHeight + 8)
 
     // Full screen click-outside dismissal scrim when search or history is open
     MouseArea {
