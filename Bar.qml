@@ -655,21 +655,75 @@ Item {
   }
 
   property var currentNotification: null
+  property bool isHistoryOpen: false
+
+  function toggleHistory() {
+    isHistoryOpen = !isHistoryOpen
+    dismissNotification()
+    if (isHistoryOpen) isSearchOpen = false
+  }
+
+  function openHistory() {
+    isHistoryOpen = true
+    isSearchOpen = false
+    dismissNotification()
+  }
+
+  function closeHistory() {
+    isHistoryOpen = false
+    dismissNotification()
+  }
+
   readonly property var notifService: shell ? shell.serviceFor("omarchy.notifications") : null
   readonly property var notifPopupModel: notifService ? notifService.popupModel : null
+
+  IpcHandler {
+    target: "gustavo.bar"
+
+    function toggleHistory(): string {
+      root.toggleHistory()
+      return "ok"
+    }
+
+    function openHistory(): string {
+      root.openHistory()
+      return "ok"
+    }
+
+    function closeHistory(): string {
+      root.closeHistory()
+      return "ok"
+    }
+  }
+
+  Connections {
+    target: root.notifService
+    ignoreUnknownSignals: true
+    function onHistoryReadQueuedChanged() {
+      if (root.notifService && root.notifService.historyReadQueued) {
+        root.toggleHistory()
+      }
+    }
+  }
 
   Connections {
     target: root.notifPopupModel
     ignoreUnknownSignals: true
     function onRowsInserted(parent, first, last) {
-      for (var i = first; i <= last; i++) {
-        var item = root.notifPopupModel.get(i)
-        if (item) {
-          root.showNotificationData(item)
+      if (!root.isHistoryOpen) {
+        for (var i = first; i <= last; i++) {
+          var item = root.notifPopupModel.get(i)
+          if (item && item.originalId > 0 && root.notifService && root.notifService.liveRefs && root.notifService.liveRefs[item.originalId]) {
+            root.showNotificationData(item)
+          }
         }
       }
-      // Immediately clear popupModel in the same tick so top-right window never renders
-      root.notifPopupModel.clear()
+      // Immediately clear popupModel so top-right window never renders, while archiving the files into history
+      if (root.notifService && typeof root.notifService.clearPopups === "function") {
+        root.notifService.clearPopups()
+      } else {
+        root.notifPopupModel.clear()
+      }
     }
   }
 
@@ -1388,6 +1442,8 @@ Item {
 
     property var barPluginRoot: null
     readonly property bool isSearchOpen: barPluginRoot ? barPluginRoot.isSearchOpen : false
+    readonly property bool isHistoryOpen: barPluginRoot ? barPluginRoot.isHistoryOpen : false
+    readonly property bool isExpanded: isSearchOpen || isHistoryOpen
 
     visible: true
     exclusionMode: ExclusionMode.Ignore
@@ -1395,28 +1451,31 @@ Item {
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "omarchy-bar-center"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: centerWindow.isSearchOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: centerWindow.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     anchors {
       top: true
-      bottom: centerWindow.isSearchOpen
+      bottom: true
       left: true
       right: true
     }
 
-    implicitHeight: centerWindow.isSearchOpen ? (screen ? screen.height : 0) : centerIslandItem.height
-
-    // Full screen click-outside dismissal scrim when search is open
+    // Full screen click-outside dismissal scrim when search or history is open
     MouseArea {
+      id: outsideClickArea
       anchors.fill: parent
-      visible: centerWindow.isSearchOpen
+      visible: centerWindow.isExpanded
+      hoverEnabled: true
       onClicked: {
-        if (centerWindow.barPluginRoot) centerWindow.barPluginRoot.isSearchOpen = false
+        if (centerWindow.barPluginRoot) {
+          centerWindow.barPluginRoot.isSearchOpen = false
+          centerWindow.barPluginRoot.isHistoryOpen = false
+        }
       }
     }
 
     mask: Region {
-      item: centerWindow.isSearchOpen ? centerWindow.contentItem : centerIslandItem
+      item: centerWindow.isExpanded ? centerWindow.contentItem : centerIslandItem
     }
 
     CenterIsland {

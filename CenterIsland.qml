@@ -18,6 +18,7 @@ Item {
   readonly property real centerModulesWidth: centerModulesItem ? Math.ceil(centerModulesItem.implicitWidth) : 0
 
   readonly property bool isSearchOpen: root ? root.isSearchOpen : false
+  readonly property bool isHistoryOpen: root ? root.isHistoryOpen : false
   readonly property color islandForeground: (root && root.barForeground) ? root.barForeground : Color.bar.text
   readonly property color islandThemeForeground: (root && root.themeForeground) ? root.themeForeground : Color.foreground
 
@@ -29,6 +30,10 @@ Item {
 
   function openSearch() {
     if (root) root.isSearchOpen = true
+  }
+
+  function closeSearch() {
+    if (root) root.isSearchOpen = false
   }
 
   property bool isMediaOpen: false
@@ -332,7 +337,7 @@ Item {
             name: label,
             detail: desc ? desc : (action ? ("Command: " + action) : parentPath),
             iconSource: "",
-            iconGlyph: item.icon || "⚙",
+            iconGlyph: item.icon || "󰒓",
             action: action ? action : ("omarchy-menu toggle " + id),
             score: score
           })
@@ -349,9 +354,10 @@ Item {
     return results
   }
 
-  // Current display mode: "search" | "volume" | "brightness" | "notification" | "media" | "date-clock" | "clock"
+  // Current display mode: "search" | "history" | "volume" | "brightness" | "notification" | "media" | "date-clock" | "clock"
   readonly property string currentMode: {
     if (centerIsland.isSearchOpen) return "search"
+    if (centerIsland.isHistoryOpen) return "history"
     if (isOsdActive && osdMode !== "") return osdMode
     if (isNotificationActive && currentNotification) return "notification"
     if (isMediaOpen && hasActiveMedia) return "media"
@@ -362,6 +368,7 @@ Item {
   readonly property real targetContentWidth: {
     switch (currentMode) {
       case "search": return 520
+      case "history": return 480
       case "volume":
       case "brightness": return 300
       case "notification": return 400
@@ -374,6 +381,7 @@ Item {
   readonly property real targetContentHeight: {
     switch (currentMode) {
       case "search": return 420
+      case "history": return 400
       case "volume":
       case "brightness": return 36
       case "notification": return 68
@@ -387,6 +395,59 @@ Item {
   implicitHeight: notchSurface.implicitHeight
   width: implicitWidth
   height: implicitHeight
+
+  ListModel {
+    id: historyModel
+  }
+
+  Process {
+    id: historyLoaderProc
+    command: ["bash", "-c", "python3 -c \"import os, glob, json; hdir=os.path.expanduser('~/.local/state/omarchy/notifications'); files=glob.glob(hdir+'/*.json') + glob.glob(hdir+'/history/*.json'); res=[]; seen=set();\nfor f in files:\n try:\n  d=json.load(open(f)); key=str(d.get('id',''))+'-'+str(d.get('timestamp',''))+'-'+str(d.get('summary',''));\n  if key not in seen:\n   seen.add(key); d['filePath']=f; res.append(d)\n except: pass\nres.sort(key=lambda x: x.get('timestamp', 0), reverse=True); print(json.dumps(res))\""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var list = JSON.parse(text)
+          historyModel.clear()
+          for (var i = 0; i < list.length; i++) {
+            historyModel.append(list[i])
+          }
+        } catch (e) {
+          console.warn("Error parsing notification history:", e)
+        }
+      }
+    }
+  }
+
+  function reloadHistory() {
+    if (!historyLoaderProc.running) {
+      historyLoaderProc.running = true
+    }
+  }
+
+  Connections {
+    target: centerIsland
+    function onIsHistoryOpenChanged() {
+      if (centerIsland.isHistoryOpen) {
+        centerIsland.reloadHistory()
+      }
+    }
+  }
+
+  function formatRelativeTime(timestamp) {
+    if (!timestamp) return ""
+    var now = Date.now()
+    var diff = Math.max(0, Math.floor((now - timestamp) / 1000))
+    if (diff < 60) return "Just now"
+    var mins = Math.floor(diff / 60)
+    if (mins < 60) return mins + "m ago"
+    var hours = Math.floor(mins / 60)
+    if (hours < 24) return hours + "h ago"
+    var days = Math.floor(hours / 24)
+    if (days < 7) return days + "d ago"
+    var d = new Date(timestamp)
+    return (d.getMonth() + 1) + "/" + d.getDate()
+  }
 
   function resolveIconSource(notif) {
     return root ? root.resolveNotificationIcon(notif) : ""
@@ -403,6 +464,7 @@ Item {
   NotchSurface {
     id: notchSurface
     radius: 8
+    clip: true
     color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
     borderColor: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
     borderWidth: 1
@@ -565,8 +627,9 @@ Item {
 
             Text {
               anchors.centerIn: parent
-              text: "♪"
-              font.pixelSize: 20
+              text: "󰎆"
+              font.family: Style.font.family
+              font.pixelSize: 18
               color: centerIsland.islandForeground
               opacity: 0.6
               visible: !centerIsland.activePlayer || !centerIsland.activePlayer.trackArtUrl
@@ -756,7 +819,8 @@ Item {
           spacing: Style.space(12)
 
           Text {
-            text: centerIsland.isMuted ? "🔇" : (centerIsland.currentVolume > 0.5 ? "🔊" : (centerIsland.currentVolume > 0.0 ? "🔉" : "🔈"))
+            text: centerIsland.isMuted ? "󰝟" : (centerIsland.currentVolume > 0.5 ? "󰕾" : (centerIsland.currentVolume > 0.0 ? "󰖀" : "󰕿"))
+            font.family: Style.font.family
             font.pixelSize: 16
             color: centerIsland.islandForeground
           }
@@ -809,8 +873,9 @@ Item {
           spacing: Style.space(12)
 
           Text {
-            text: "☀️"
-            font.pixelSize: 15
+            text: "󰃠"
+            font.family: Style.font.family
+            font.pixelSize: 16
             color: centerIsland.islandForeground
           }
 
@@ -897,8 +962,10 @@ Item {
             Text {
               anchors.centerIn: parent
               visible: !notifImg.visible && parent.glyphText === ""
-              text: "💬"
+              text: "󰂚"
+              font.family: Style.font.family
               font.pixelSize: 18
+              color: centerIsland.islandForeground
             }
           }
 
@@ -962,11 +1029,18 @@ Item {
         anchors.rightMargin: 16
         anchors.topMargin: 12
         anchors.bottomMargin: 14
+        clip: true
         visible: opacity > 0.01
         opacity: centerIsland.currentMode === "search" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+        }
+
+        focus: centerIsland.isSearchOpen
+        Keys.onEscapePressed: {
+          centerIsland.closeSearch()
+          if (root) root.isSearchOpen = false
         }
 
         ColumnLayout {
@@ -989,8 +1063,9 @@ Item {
               spacing: Style.space(10)
 
               Text {
-                text: "🔍"
-                font.pixelSize: 14
+                text: "󰍉"
+                font.family: Style.font.family
+                font.pixelSize: 16
                 color: centerIsland.islandForeground
                 opacity: 0.75
               }
@@ -1131,7 +1206,8 @@ Item {
 
                     Text {
                       anchors.centerIn: parent
-                      text: itemData.iconGlyph || "⚙"
+                      text: itemData.iconGlyph || "󰒓"
+                      font.family: Style.font.family
                       font.pixelSize: 16
                       color: centerIsland.islandForeground
                     }
@@ -1192,6 +1268,384 @@ Item {
                 onClicked: {
                   appList.currentIndex = index
                   resultRow.launchEntry()
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ------------------------------------------------------------- Mode 8: Notification History View
+      Item {
+        id: historyView
+        anchors.fill: parent
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        anchors.topMargin: 14
+        anchors.bottomMargin: 14
+        clip: true
+        visible: opacity > 0.01
+        opacity: centerIsland.currentMode === "history" ? 1.0 : 0.0
+
+        Behavior on opacity {
+          NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+        }
+
+        focus: centerIsland.isHistoryOpen
+        Keys.onEscapePressed: {
+          if (root) root.closeHistory()
+        }
+
+        ColumnLayout {
+          anchors.fill: parent
+          spacing: Style.space(12)
+
+          // Header Row
+          RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Text {
+              text: "󰂚"
+              font.family: Style.font.family
+              font.pixelSize: 16
+              color: Color.accent || centerIsland.islandForeground
+            }
+
+            Text {
+              text: "Notifications"
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body
+              font.weight: Font.Bold
+              color: centerIsland.islandForeground
+            }
+
+            Rectangle {
+              visible: historyModel.count > 0
+              Layout.preferredHeight: 18
+              Layout.preferredWidth: countLabel.implicitWidth + 10
+              radius: 9
+              color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15)
+
+              Text {
+                id: countLabel
+                anchors.centerIn: parent
+                text: String(historyModel.count)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.weight: Font.DemiBold
+                color: centerIsland.islandForeground
+              }
+            }
+
+            Item { Layout.fillWidth: true }
+
+            // "Clear All" button
+            Rectangle {
+              visible: historyModel.count > 0
+              Layout.preferredHeight: 26
+              Layout.preferredWidth: clearRow.implicitWidth + 16
+              radius: 6
+              color: clearArea.containsMouse ? Qt.rgba(Color.red.r, Color.red.g, Color.red.b, 0.22) : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.08)
+
+              RowLayout {
+                id: clearRow
+                anchors.centerIn: parent
+                spacing: 4
+
+                Text {
+                  text: "󰆴"
+                  font.family: Style.font.family
+                  font.pixelSize: 13
+                  color: clearArea.containsMouse ? Color.red : centerIsland.islandForeground
+                  opacity: clearArea.containsMouse ? 1.0 : 0.7
+                }
+
+                Text {
+                  text: "Clear All"
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.weight: Font.DemiBold
+                  color: clearArea.containsMouse ? Color.red : centerIsland.islandForeground
+                  opacity: clearArea.containsMouse ? 1.0 : 0.85
+                }
+              }
+
+              MouseArea {
+                id: clearArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  Util.execDetached("rm -f " + (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications/*.json " + (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications/history/*.json")
+                  historyModel.clear()
+                }
+              }
+            }
+          }
+
+          // Content Area: Empty State or History List
+          Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            // Empty placeholder
+            ColumnLayout {
+              anchors.centerIn: parent
+              visible: historyModel.count === 0
+              spacing: 8
+
+              Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: "󰂚"
+                font.family: Style.font.family
+                font.pixelSize: 42
+                color: centerIsland.islandForeground
+                opacity: 0.25
+              }
+
+              Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: "No Notifications"
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+                font.weight: Font.DemiBold
+                color: centerIsland.islandForeground
+                opacity: 0.6
+              }
+
+              Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: "You're all caught up"
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                color: centerIsland.islandForeground
+                opacity: 0.4
+              }
+            }
+
+            // Scrollable List
+            ListView {
+              id: historyListView
+              anchors.fill: parent
+              visible: historyModel.count > 0
+              model: historyModel
+              clip: true
+              spacing: 6
+              boundsBehavior: Flickable.StopAtBounds
+
+              delegate: Item {
+                id: cardItem
+                width: historyListView.width
+                implicitHeight: cardBox.implicitHeight
+
+                property real swipeX: 0
+
+                // Background red swipe layer
+                Rectangle {
+                  anchors.fill: parent
+                  radius: 8
+                  color: Qt.rgba(0.9, 0.2, 0.2, 0.8)
+                  visible: Math.abs(cardItem.swipeX) > 10
+
+                  Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "󰆴 Delete"
+                    font.family: Style.font.family
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                    color: "white"
+                    visible: cardItem.swipeX > 10
+                  }
+
+                  Text {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Delete 󰆴"
+                    font.family: Style.font.family
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                    color: "white"
+                    visible: cardItem.swipeX < -10
+                  }
+                }
+
+                // Front card container
+                Rectangle {
+                  id: cardBox
+                  x: cardItem.swipeX
+                  width: parent.width
+                  implicitHeight: Math.max(54, innerRow.implicitHeight + 16)
+                  radius: 8
+                  color: cardMouse.containsMouse ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.12) : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.06)
+                  border.color: cardMouse.containsMouse ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18) : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.08)
+                  border.width: 1
+
+                  Behavior on x {
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                  }
+
+                  RowLayout {
+                    id: innerRow
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 12
+
+                    // Icon Box
+                    Rectangle {
+                      Layout.preferredWidth: 34
+                      Layout.preferredHeight: 34
+                      Layout.alignment: Qt.AlignTop
+                      radius: 8
+                      color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.10)
+                      clip: true
+
+                      readonly property string cardIconSrc: centerIsland.resolveIconSource(model)
+                      readonly property string cardGlyph: centerIsland.resolveGlyph(model)
+
+                      Image {
+                        id: cardImg
+                        anchors.fill: parent
+                        anchors.margins: 3
+                        source: parent.cardIconSrc ? parent.cardIconSrc : ""
+                        sourceSize.width: 28 * Screen.devicePixelRatio
+                        sourceSize.height: 28 * Screen.devicePixelRatio
+                        fillMode: Image.PreserveAspectFit
+                        asynchronous: true
+                        smooth: true
+                        visible: parent.cardIconSrc !== "" && status === Image.Ready
+                      }
+
+                      Text {
+                        anchors.centerIn: parent
+                        visible: !cardImg.visible && parent.cardGlyph !== ""
+                        text: parent.cardGlyph
+                        font.family: Style.font.family
+                        font.pixelSize: 16
+                        color: centerIsland.islandForeground
+                      }
+
+                      Text {
+                        anchors.centerIn: parent
+                        visible: !cardImg.visible && parent.cardGlyph === ""
+                        text: "󰂚"
+                        font.family: Style.font.family
+                        font.pixelSize: 16
+                        color: centerIsland.islandForeground
+                      }
+                    }
+
+                    // Text Content Column
+                    ColumnLayout {
+                      Layout.fillWidth: true
+                      spacing: 2
+
+                      RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        Text {
+                          Layout.fillWidth: true
+                          text: model.app || model.appName || ""
+                          font.family: Style.font.family
+                          font.pixelSize: Style.font.caption
+                          font.weight: Font.DemiBold
+                          color: Color.accent || centerIsland.islandForeground
+                          opacity: 0.9
+                          elide: Text.ElideRight
+                          visible: text !== ""
+                        }
+
+                        Text {
+                          text: centerIsland.formatRelativeTime(model.timestamp)
+                          font.family: Style.font.family
+                          font.pixelSize: Style.font.caption
+                          color: centerIsland.islandForeground
+                          opacity: 0.5
+                          visible: text !== ""
+                        }
+                      }
+
+                      Text {
+                        Layout.fillWidth: true
+                        text: model.summary || ""
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                        font.weight: Font.Bold
+                        color: centerIsland.islandForeground
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                      }
+
+                      Text {
+                        Layout.fillWidth: true
+                        text: model.body || ""
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.caption
+                        color: centerIsland.islandForeground
+                        opacity: 0.75
+                        elide: Text.ElideRight
+                        maximumLineCount: 2
+                        wrapMode: Text.Wrap
+                        visible: text !== ""
+                      }
+                    }
+                  }
+
+                  MouseArea {
+                    id: cardMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+
+                    drag.target: cardBox
+                    drag.axis: Drag.XAxis
+                    drag.minimumX: -250
+                    drag.maximumX: 250
+
+                    onPositionChanged: {
+                      if (drag.active) {
+                        cardItem.swipeX = cardBox.x
+                      }
+                    }
+
+                    onReleased: {
+                      if (Math.abs(cardItem.swipeX) > 70) {
+                        deleteNotification(index, model.filePath)
+                      } else {
+                        cardItem.swipeX = 0
+                        cardBox.x = 0
+                      }
+                    }
+
+                    onClicked: function(mouse) {
+                      if (Math.abs(cardItem.swipeX) > 10) return
+                      if (mouse.button === Qt.RightButton) {
+                        deleteNotification(index, model.filePath)
+                      } else {
+                        // Left click -> Execute or Focus
+                        if (model.exec) {
+                          Util.execDetached(model.exec)
+                        } else if (model.app && model.app !== "notify-send" && model.app !== "omarchy-action") {
+                          var omPath = (root && root.omarchyPath) ? root.omarchyPath : "/usr/share/omarchy"
+                          Util.execDetached(omPath + "/bin/omarchy-hyprland-focus-app " + model.app)
+                        }
+                        deleteNotification(index, model.filePath)
+                        if (root) root.closeHistory()
+                      }
+                    }
+                  }
+                }
+
+                function deleteNotification(idx, filePath) {
+                  if (filePath) {
+                    Util.execDetached("rm -f " + filePath)
+                  }
+                  historyModel.remove(idx)
                 }
               }
             }

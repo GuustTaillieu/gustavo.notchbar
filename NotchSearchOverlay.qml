@@ -86,10 +86,11 @@ PanelWindow {
             spacing: Style.space(8)
 
             Text {
-              text: "🔍"
-              font.pixelSize: 13
+              text: "󰍉"
+              font.family: Style.font.family
+              font.pixelSize: 15
               color: searchOverlay.searchForeground
-              opacity: 0.7
+              opacity: 0.75
             }
 
             TextInput {
