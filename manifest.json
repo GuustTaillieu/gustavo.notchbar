@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "gustavo.notchbar",
-  "name": "Gustavo Notch Bar",
+  "name": "Notch Island",
   "version": "1.0.0",
   "author": "Gustavo",
-  "description": "Tide-Island style floating dynamic status bar with auto-hide",
+  "description": "Dynamic-Island & Notch style status bar for Omarchy with edge snapping, responsive islands, and interactive launcher",
   "kinds": [
     "bar"
   ],
