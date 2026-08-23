@@ -39,13 +39,13 @@ Designed with smooth organic fillet curves that visually anchor the bar to the t
 Install directly with the Omarchy plugin manager:
 
 ```bash
-omarchy plugin add https://github.com/GuustTaillieu/gustavo.bar.git
+omarchy plugin add https://github.com/GuustTaillieu/gustavo.notchbar.git
 ```
 
 Or clone into your plugins directory:
 
 ```bash
-git clone https://github.com/GuustTaillieu/gustavo.bar.git ~/.config/omarchy/plugins/gustavo.notchbar
+git clone https://github.com/GuustTaillieu/gustavo.notchbar.git ~/.config/omarchy/plugins/gustavo.notchbar
 omarchy-shell shell rescanPlugins
 ```
 
