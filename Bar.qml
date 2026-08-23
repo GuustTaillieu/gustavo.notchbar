@@ -1615,7 +1615,8 @@ Item {
     readonly property bool isDragActive: (root.barDragSource !== null && root.sameWindow(root.barDragWindow, barWindow)) || root.barMoveActive
 
     visible: !remapGuard.remapping
-    exclusionMode: ExclusionMode.Auto
+    exclusionMode: ExclusionMode.Normal
+    WlrLayershell.exclusiveZone: root.islandHeight
     color: "transparent"
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "omarchy-bar"
