@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "gustavo.bar",
-  "name": "Gustavo Island Bar",
+  "id": "gustavo.notchbar",
+  "name": "Gustavo Notch Bar",
   "version": "1.0.0",
   "author": "Gustavo",
   "description": "Tide-Island style floating dynamic status bar with auto-hide",
