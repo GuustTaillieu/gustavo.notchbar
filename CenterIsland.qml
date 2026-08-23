@@ -1097,6 +1097,7 @@ Item {
     id: notchSurface
     radius: 8
     clip: true
+    attachSide: (root && root.centerIslandAttach) ? root.centerIslandAttach : "none"
     color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
     borderColor: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
     borderWidth: 1
@@ -1134,6 +1135,7 @@ Item {
         Row {
           id: idleRow
           anchors.centerIn: parent
+          anchors.verticalCenterOffset: -2
           spacing: 6
 
           Loader {

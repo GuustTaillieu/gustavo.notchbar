@@ -33,6 +33,178 @@ Item {
   property bool isSearchOpen: false
   property bool isMenuOpen: false
   property var centerIslandRef: null
+  property real leftIslandX: 0
+  property string leftIslandAttach: "left" // "left" | "none"
+
+  property real rightIslandX: -1 // -1 means default right
+  property string rightIslandAttach: "right" // "right" | "none"
+
+  property real centerIslandOffset: 0
+  property string centerIslandAttach: "none" // "none" | "left" | "right"
+
+  function applyStylePreset(preset) {
+    if (preset === "edge") {
+      root.leftIslandAttach = "left"
+      root.leftIslandX = 0
+      root.rightIslandAttach = "right"
+      root.rightIslandX = -1
+      root.centerIslandAttach = "none"
+      root.centerIslandOffset = 0
+    } else if (preset === "island") {
+      root.leftIslandAttach = "none"
+      root.leftIslandX = 12
+      root.rightIslandAttach = "none"
+      root.rightIslandX = -1
+      root.centerIslandAttach = "none"
+      root.centerIslandOffset = 0
+    }
+    root.saveIslandLayout()
+  }
+
+  function toggleStylePreset() {
+    if (root.leftIslandAttach === "left" && root.rightIslandAttach === "right") {
+      root.applyStylePreset("island")
+    } else {
+      root.applyStylePreset("edge")
+    }
+  }
+
+  property bool isDraggingIsland: false
+  property string activeSuperDragRegion: ""
+  property real superDragStartWindowX: 0
+  property real superDragStartIslandX: 0
+
+  function startIslandDrag(slot, mouse) {
+    var region = slot.region || "center"
+    root.activeSuperDragRegion = region
+    var pt = slot.mapToItem(null, mouse.x, mouse.y)
+    root.superDragStartWindowX = pt.x
+    var win = root.targetWindow(slot.activeItem) || root.targetWindow(slot) || root.barWindow
+    var screenW = win ? win.width : 1920
+
+    if (region === "left") {
+      root.superDragStartIslandX = root.leftIslandAttach === "left" ? 0 : root.leftIslandX
+    } else if (region === "right") {
+      root.superDragStartIslandX = root.rightIslandAttach === "right" ? (screenW - 100) : (root.rightIslandX < 0 ? (screenW - 100) : root.rightIslandX)
+    } else {
+      root.superDragStartIslandX = root.centerIslandOffset
+    }
+    root.isDraggingIsland = true
+  }
+
+  function updateIslandDrag(mouseWindowX, screenWidth, leftW, centerW, rightW) {
+    if (!root.isDraggingIsland || !root.activeSuperDragRegion) return
+    var delta = mouseWindowX - root.superDragStartWindowX
+    var region = root.activeSuperDragRegion
+
+    if (region === "left") {
+      var targetX = root.superDragStartIslandX + delta
+      if (targetX <= 8) {
+        root.leftIslandAttach = "left"
+        root.leftIslandX = 0
+      } else if (targetX >= screenWidth - leftW - 16) {
+        root.leftIslandAttach = "right"
+        root.leftIslandX = screenWidth - leftW
+      } else {
+        root.leftIslandAttach = "none"
+        root.leftIslandX = Math.max(0, Math.min(screenWidth - leftW, targetX))
+      }
+    } else if (region === "right") {
+      var targetX = root.superDragStartIslandX + delta
+      if (targetX >= screenWidth - rightW - 16) {
+        root.rightIslandAttach = "right"
+        root.rightIslandX = screenWidth - rightW
+      } else if (targetX <= 8) {
+        root.rightIslandAttach = "left"
+        root.rightIslandX = 0
+      } else {
+        root.rightIslandAttach = "none"
+        root.rightIslandX = Math.max(0, Math.min(screenWidth - rightW, targetX))
+      }
+    } else {
+      var targetOffset = root.superDragStartIslandX + delta
+      var base = Math.round((screenWidth - centerW) / 2)
+      var targetX = base + targetOffset
+      if (targetX <= 8) {
+        root.centerIslandAttach = "left"
+        root.centerIslandOffset = -base
+      } else if (targetX >= screenWidth - centerW - 16) {
+        root.centerIslandAttach = "right"
+        root.centerIslandOffset = base
+      } else {
+        root.centerIslandAttach = "none"
+        root.centerIslandOffset = Math.max(-base, Math.min(base, targetOffset))
+      }
+    }
+  }
+
+  function finishIslandDrag(screenWidth, leftW, centerW, rightW) {
+    if (!root.isDraggingIsland) return
+    root.isDraggingIsland = false
+    root.activeSuperDragRegion = ""
+    root.resolveIslandCollisions(screenWidth, leftW, centerW, rightW)
+    root.saveIslandLayout()
+  }
+
+  function resolveIslandCollisions(screenWidth, leftW, centerW, rightW) {
+    var lX = root.leftIslandAttach === "left" ? 0 : Math.max(0, Math.min(screenWidth - leftW, root.leftIslandX))
+    var rX = root.rightIslandAttach === "right" ? Math.max(0, screenWidth - rightW) : Math.max(0, Math.min(screenWidth - rightW, root.rightIslandX < 0 ? screenWidth - rightW : root.rightIslandX))
+    var cX = Math.round((screenWidth - centerW) / 2 + root.centerIslandOffset)
+    cX = Math.max(0, Math.min(screenWidth - centerW, cX))
+
+    if (leftW > 0 && lX + leftW > cX) {
+      if (root.leftIslandAttach === "left") {
+        cX = Math.min(screenWidth - centerW, lX + leftW + 8)
+      } else {
+        lX = Math.max(0, cX - leftW - 8)
+      }
+    }
+
+    if (rightW > 0 && cX + centerW > rX) {
+      if (root.rightIslandAttach === "right") {
+        cX = Math.max(lX + leftW + 8, rX - centerW - 8)
+      } else {
+        rX = Math.min(screenWidth - rightW, cX + centerW + 8)
+      }
+    }
+
+    root.leftIslandX = lX
+    root.rightIslandX = rX
+    root.centerIslandOffset = cX - Math.round((screenWidth - centerW) / 2)
+  }
+
+  FileView {
+    id: islandConfigFile
+    path: root.stateHome + "/omarchy/notchbar-layout.json"
+    onLoaded: {
+      try {
+        var raw = islandConfigFile.text()
+        if (!raw) return
+        var data = JSON.parse(raw)
+        if (data.left) {
+          root.leftIslandX = Number(data.left.x || 0)
+          root.leftIslandAttach = String(data.left.attach || "left")
+        }
+        if (data.right) {
+          root.rightIslandX = Number(data.right.x !== undefined ? data.right.x : -1)
+          root.rightIslandAttach = String(data.right.attach || "right")
+        }
+        if (data.center) {
+          root.centerIslandOffset = Number(data.center.offset || 0)
+          root.centerIslandAttach = String(data.center.attach || "none")
+        }
+      } catch(e) {}
+    }
+  }
+
+  function saveIslandLayout() {
+    var data = {
+      left: { x: root.leftIslandX, attach: root.leftIslandAttach },
+      right: { x: root.rightIslandX, attach: root.rightIslandAttach },
+      center: { offset: root.centerIslandOffset, attach: root.centerIslandAttach }
+    }
+    islandConfigFile.setText(JSON.stringify(data, null, 2))
+  }
 
   function openMenu(route) {
     root.isMenuOpen = true
@@ -103,6 +275,15 @@ Item {
       root.openMenu(route || "root")
       return "menu-opened"
     }
+
+    function style(preset: string): string {
+      if (preset === "edge" || preset === "island") {
+        root.applyStylePreset(preset)
+      } else {
+        root.toggleStylePreset()
+      }
+      return root.leftIslandAttach === "left" && root.rightIslandAttach === "right" ? "edge" : "island"
+    }
   }
 
   IpcHandler {
@@ -132,6 +313,15 @@ Item {
     function menu(route: string): string {
       root.openMenu(route || "root")
       return "menu-opened"
+    }
+
+    function style(preset: string): string {
+      if (preset === "edge" || preset === "island") {
+        root.applyStylePreset(preset)
+      } else {
+        root.toggleStylePreset()
+      }
+      return root.leftIslandAttach === "left" && root.rightIslandAttach === "right" ? "edge" : "island"
     }
   }
 
@@ -1437,28 +1627,41 @@ Item {
       right: true
     }
 
-    implicitHeight: root.islandHeight
+    implicitHeight: root.islandHeight + 12
 
     ScreenMoveRemap {
       id: remapGuard
       window: barWindow
     }
 
+    readonly property real effectiveLeftX: {
+      if (root.leftIslandAttach === "left") return 0
+      if (root.leftIslandAttach === "right") return Math.max(0, barWindow.width - leftNotch.width)
+      return Math.max(0, Math.min(barWindow.width - leftNotch.width, root.leftIslandX))
+    }
+
+    readonly property real effectiveRightX: {
+      if (root.rightIslandAttach === "right") return Math.max(0, barWindow.width - rightNotch.width)
+      if (root.rightIslandAttach === "left") return 0
+      var targetX = root.rightIslandX < 0 ? (barWindow.width - rightNotch.width) : root.rightIslandX
+      return Math.max(0, Math.min(barWindow.width - rightNotch.width, targetX))
+    }
+
     mask: Region {
       // 1. Left Notch body
       Region {
-        x: 0
+        x: leftNotch.contentWidth > 0 ? Math.floor(leftNotch.x) : 0
         y: 0
-        width: leftNotch.contentWidth > 0 ? Math.ceil(leftNotch.width + leftNotch.anchors.leftMargin) : 0
+        width: leftNotch.contentWidth > 0 ? Math.ceil(leftNotch.width + 4) : 0
         height: leftNotch.contentWidth > 0 ? Math.ceil(leftNotch.height + 4) : 0
       }
 
       // 2. Right Notch body
       Region {
         intersection: Intersection.Combine
-        x: rightNotch.contentWidth > 0 ? Math.max(0, Math.floor(barWindow.width - rightNotch.width - rightNotch.anchors.rightMargin)) : 0
+        x: rightNotch.contentWidth > 0 ? Math.floor(rightNotch.x) : 0
         y: 0
-        width: rightNotch.contentWidth > 0 ? Math.ceil(rightNotch.width + rightNotch.anchors.rightMargin) : 0
+        width: rightNotch.contentWidth > 0 ? Math.ceil(rightNotch.width + 4) : 0
         height: rightNotch.contentWidth > 0 ? Math.ceil(rightNotch.height + 4) : 0
       }
     }
@@ -1467,9 +1670,11 @@ Item {
     NotchSurface {
       id: leftNotch
       z: 10
-      anchors.left: parent.left
-      anchors.leftMargin: 8
       anchors.top: parent.top
+      anchors.left: root.leftIslandAttach === "left" && !root.isDraggingIsland ? parent.left : undefined
+      x: root.leftIslandAttach === "left" ? 0 : (root.leftIslandAttach === "right" ? Math.max(0, barWindow.width - leftNotch.width) : Math.max(0, Math.min(barWindow.width - leftNotch.width, root.leftIslandX)))
+      y: 0
+      attachSide: root.leftIslandAttach
       radius: 8
       visible: contentWidth > 0
       opacity: contentWidth > 0 ? 1.0 : 0.0
@@ -1484,6 +1689,10 @@ Item {
       }
       contentHeight: root.islandHeight
 
+      Behavior on x {
+        enabled: !root.isDraggingIsland && root.leftIslandAttach !== "left"
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+      }
       Behavior on contentWidth {
         NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
       }
@@ -1491,15 +1700,63 @@ Item {
         NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
       }
 
+      MouseArea {
+        id: leftIslandDragArea
+        anchors.fill: parent
+        z: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: Qt.SizeHorCursor
+
+        property real startPressWindowX: 0
+        property real startIslandX: 0
+
+        onPressed: function(mouse) {
+          startPressWindowX = mapToItem(null, mouse.x, mouse.y).x
+          startIslandX = root.leftIslandAttach === "left" ? 0 : root.leftIslandX
+          root.isDraggingIsland = true
+        }
+
+        onPositionChanged: function(mouse) {
+          if (!root.isDraggingIsland) return
+          var currentWindowX = mapToItem(null, mouse.x, mouse.y).x
+          var delta = currentWindowX - startPressWindowX
+          var targetX = startIslandX + delta
+          if (targetX <= 8) {
+            root.leftIslandAttach = "left"
+            root.leftIslandX = 0
+          } else if (targetX >= barWindow.width - leftNotch.width - 16) {
+            root.leftIslandAttach = "right"
+            root.leftIslandX = barWindow.width - leftNotch.width
+          } else {
+            root.leftIslandAttach = "none"
+            root.leftIslandX = Math.max(0, Math.min(barWindow.width - leftNotch.width, targetX))
+          }
+        }
+
+        onReleased: function(mouse) {
+          root.isDraggingIsland = false
+          root.resolveIslandCollisions(barWindow.width, leftNotch.width, 100, rightNotch.width)
+          root.saveIslandLayout()
+        }
+      }
+
       Item {
         anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
+        height: root.islandHeight
+        anchors.left: leftNotch.attachSide === "left" ? parent.left : undefined
+        anchors.right: leftNotch.attachSide === "right" ? parent.right : undefined
+        anchors.horizontalCenter: leftNotch.attachSide === "none" ? parent.horizontalCenter : undefined
         width: leftNotch.contentWidth
 
         LeftModules {
           id: leftModules
-          anchors.centerIn: parent
+          anchors.left: leftNotch.attachSide === "left" ? parent.left : undefined
+          anchors.leftMargin: leftNotch.attachSide === "left" ? 6 : 0
+          anchors.right: leftNotch.attachSide === "right" ? parent.right : undefined
+          anchors.rightMargin: leftNotch.attachSide === "right" ? 6 : 0
+          anchors.horizontalCenter: leftNotch.attachSide === "none" ? parent.horizontalCenter : undefined
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.verticalCenterOffset: -2
         }
       }
     }
@@ -1508,9 +1765,11 @@ Item {
     NotchSurface {
       id: rightNotch
       z: 10
-      anchors.right: parent.right
-      anchors.rightMargin: 8
       anchors.top: parent.top
+      anchors.right: root.rightIslandAttach === "right" && !root.isDraggingIsland ? parent.right : undefined
+      x: root.rightIslandAttach === "right" ? Math.max(0, barWindow.width - rightNotch.width) : (root.rightIslandAttach === "left" ? 0 : Math.max(0, Math.min(barWindow.width - rightNotch.width, root.rightIslandX < 0 ? (barWindow.width - rightNotch.width) : root.rightIslandX)))
+      y: 0
+      attachSide: root.rightIslandAttach
       radius: 8
       visible: contentWidth > 0
       opacity: contentWidth > 0 ? 1.0 : 0.0
@@ -1525,6 +1784,10 @@ Item {
       }
       contentHeight: root.islandHeight
 
+      Behavior on x {
+        enabled: !root.isDraggingIsland && root.rightIslandAttach !== "right"
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+      }
       Behavior on contentWidth {
         NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
       }
@@ -1532,15 +1795,63 @@ Item {
         NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
       }
 
+      MouseArea {
+        id: rightIslandDragArea
+        anchors.fill: parent
+        z: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: Qt.SizeHorCursor
+
+        property real startPressWindowX: 0
+        property real startIslandX: 0
+
+        onPressed: function(mouse) {
+          startPressWindowX = mapToItem(null, mouse.x, mouse.y).x
+          startIslandX = root.rightIslandAttach === "right" ? (barWindow.width - rightNotch.width) : (root.rightIslandX < 0 ? (barWindow.width - rightNotch.width) : root.rightIslandX)
+          root.isDraggingIsland = true
+        }
+
+        onPositionChanged: function(mouse) {
+          if (!root.isDraggingIsland) return
+          var currentWindowX = mapToItem(null, mouse.x, mouse.y).x
+          var delta = currentWindowX - startPressWindowX
+          var targetX = startIslandX + delta
+          if (targetX >= barWindow.width - rightNotch.width - 16) {
+            root.rightIslandAttach = "right"
+            root.rightIslandX = barWindow.width - rightNotch.width
+          } else if (targetX <= 8) {
+            root.rightIslandAttach = "left"
+            root.rightIslandX = 0
+          } else {
+            root.rightIslandAttach = "none"
+            root.rightIslandX = Math.max(0, Math.min(barWindow.width - rightNotch.width, targetX))
+          }
+        }
+
+        onReleased: function(mouse) {
+          root.isDraggingIsland = false
+          root.resolveIslandCollisions(barWindow.width, leftNotch.width, 100, rightNotch.width)
+          root.saveIslandLayout()
+        }
+      }
+
       Item {
         anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
+        height: root.islandHeight
+        anchors.left: rightNotch.attachSide === "left" ? parent.left : undefined
+        anchors.right: rightNotch.attachSide === "right" ? parent.right : undefined
+        anchors.horizontalCenter: rightNotch.attachSide === "none" ? parent.horizontalCenter : undefined
         width: rightNotch.contentWidth
 
         RightModules {
           id: rightModules
-          anchors.centerIn: parent
+          anchors.right: rightNotch.attachSide === "right" ? parent.right : undefined
+          anchors.rightMargin: rightNotch.attachSide === "right" ? 6 : 0
+          anchors.left: rightNotch.attachSide === "left" ? parent.left : undefined
+          anchors.leftMargin: rightNotch.attachSide === "left" ? 6 : 0
+          anchors.horizontalCenter: rightNotch.attachSide === "none" ? parent.horizontalCenter : undefined
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.verticalCenterOffset: -2
         }
       }
     }
@@ -1660,8 +1971,65 @@ Item {
       z: 15
       root: centerWindow.barPluginRoot
       barWindow: centerWindow
-      anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.horizontalCenterOffset: {
+        if (!barPluginRoot) return 0
+        var base = Math.round((centerWindow.width - centerIslandItem.width) / 2)
+        if (barPluginRoot.centerIslandAttach === "left") return -base
+        if (barPluginRoot.centerIslandAttach === "right") return base
+        return barPluginRoot.centerIslandOffset
+      }
+
+      Behavior on anchors.horizontalCenterOffset {
+        enabled: !barPluginRoot || !barPluginRoot.isDraggingIsland
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+      }
+
+      MouseArea {
+        id: centerIslandDragArea
+        anchors.fill: parent
+        z: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: Qt.SizeHorCursor
+
+        property real startPressWindowX: 0
+        property real startOffset: 0
+
+        onPressed: function(mouse) {
+          startPressWindowX = mapToItem(null, mouse.x, mouse.y).x
+          startOffset = centerIslandItem.anchors.horizontalCenterOffset
+          if (centerWindow.barPluginRoot) centerWindow.barPluginRoot.isDraggingIsland = true
+        }
+
+        onPositionChanged: function(mouse) {
+          if (!centerWindow.barPluginRoot || !centerWindow.barPluginRoot.isDraggingIsland) return
+          var currentWindowX = mapToItem(null, mouse.x, mouse.y).x
+          var delta = currentWindowX - startPressWindowX
+          var targetOffset = startOffset + delta
+          var base = Math.round((centerWindow.width - centerIslandItem.width) / 2)
+          var targetX = base + targetOffset
+
+          if (targetX <= 4) {
+            centerWindow.barPluginRoot.centerIslandAttach = "left"
+            centerWindow.barPluginRoot.centerIslandOffset = -base
+          } else if (targetX >= centerWindow.width - centerIslandItem.width - 4) {
+            centerWindow.barPluginRoot.centerIslandAttach = "right"
+            centerWindow.barPluginRoot.centerIslandOffset = base
+          } else {
+            centerWindow.barPluginRoot.centerIslandAttach = "none"
+            centerWindow.barPluginRoot.centerIslandOffset = Math.max(-base, Math.min(base, targetOffset))
+          }
+        }
+
+        onReleased: function(mouse) {
+          if (centerWindow.barPluginRoot) {
+            centerWindow.barPluginRoot.isDraggingIsland = false
+            centerWindow.barPluginRoot.resolveIslandCollisions(centerWindow.width, 100, centerIslandItem.width, 100)
+            centerWindow.barPluginRoot.saveIslandLayout()
+          }
+        }
+      }
 
       centerModulesComponent: Component {
         CenterModules {}
@@ -2195,33 +2563,69 @@ Item {
       id: modulePointer
 
       property bool dragging: false
+      property bool rightDragging: false
       property bool suppressClick: false
       property real pressedX: 0
       property real pressedY: 0
+      property int pressedButton: Qt.NoButton
       readonly property bool canReorder: root.shell && typeof root.shell.mutateShellConfig === "function"
       readonly property real dragThreshold: Style.space(4)
 
       anchors.fill: parent
-      acceptedButtons: Qt.LeftButton
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
       enabled: slot.visible && slot.width > 0 && slot.height > 0
       propagateComposedEvents: true
-      cursorShape: root.moduleClickTargetAt(slot, mouseX, mouseY) ? Qt.PointingHandCursor : Qt.ArrowCursor
+      cursorShape: {
+        if (root.isDraggingIsland || rightDragging) return Qt.SizeHorCursor
+        if (root.moduleClickTargetAt(slot, mouseX, mouseY)) return Qt.PointingHandCursor
+        return Qt.ArrowCursor
+      }
       // Do not assign drag.target here: ModuleSlot is owned by Row/Column
       // positioners, and mutating slot.x/slot.y can leave stale offsets that
       // make neighboring modules overlap after a small aborted drag.
 
       onPressed: function(mouse) {
         dragging = false
+        rightDragging = false
         suppressClick = false
         pressedX = mouse.x
         pressedY = mouse.y
+        pressedButton = mouse.button
         root.clearBarDrag()
+        if (mouse.button === Qt.RightButton) {
+          mouse.accepted = false
+        }
       }
 
       onPositionChanged: function(mouse) {
-        if (!canReorder || !(mouse.buttons & Qt.LeftButton)) return
+        if (root.isDraggingIsland) {
+          var windowPt = slot.mapToItem(null, mouse.x, mouse.y)
+          var win = root.targetWindow(slot.activeItem) || root.targetWindow(slot) || root.barWindow || (slot.Window ? slot.Window.window : null)
+          var screenW = win ? win.width : 1920
+          root.updateIslandDrag(windowPt.x, screenW, 100, 200, 100)
+          mouse.accepted = true
+          return
+        }
 
         var distance = Math.abs(mouse.x - pressedX) + Math.abs(mouse.y - pressedY)
+
+        if ((mouse.buttons & Qt.RightButton) || pressedButton === Qt.RightButton) {
+          if (distance >= dragThreshold) {
+            if (!rightDragging) {
+              rightDragging = true
+              root.startIslandDrag(slot, mouse)
+            }
+            var windowPt2 = slot.mapToItem(null, mouse.x, mouse.y)
+            var win2 = root.targetWindow(slot.activeItem) || root.targetWindow(slot) || root.barWindow || (slot.Window ? slot.Window.window : null)
+            var screenW2 = win2 ? win2.width : 1920
+            root.updateIslandDrag(windowPt2.x, screenW2, 100, 200, 100)
+            mouse.accepted = true
+          }
+          return
+        }
+
+        if (!canReorder || !(mouse.buttons & Qt.LeftButton)) return
+
         if (distance >= dragThreshold) {
           if (!dragging) {
             root.barDragWindow = root.targetWindow(slot.activeItem) || root.targetWindow(slot)
@@ -2251,6 +2655,16 @@ Item {
       }
 
       onReleased: function(mouse) {
+        if (root.isDraggingIsland || rightDragging) {
+          var win = root.targetWindow(slot.activeItem) || root.targetWindow(slot) || root.barWindow || (slot.Window ? slot.Window.window : null)
+          var screenW = win ? win.width : 1920
+          root.finishIslandDrag(screenW, 100, 200, 100)
+          rightDragging = false
+          suppressClick = true
+          mouse.accepted = true
+          return
+        }
+
         var wasDragging = dragging
         var targetSlot = root.barDragTarget
         var afterTarget = root.barDragAfter
@@ -2258,6 +2672,7 @@ Item {
         if (wasDragging) suppressClick = true
 
         dragging = false
+        rightDragging = false
         root.clearBarDrag()
 
         if (wasDragging && targetSlot) {
@@ -2270,8 +2685,12 @@ Item {
 
       onCanceled: {
         dragging = false
+        rightDragging = false
         suppressClick = false
         root.clearBarDrag()
+        if (root.isDraggingIsland) {
+          root.isDraggingIsland = false
+        }
       }
 
       onClicked: function(mouse) {

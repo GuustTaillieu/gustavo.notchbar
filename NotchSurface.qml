@@ -11,10 +11,16 @@ Item {
   property color borderColor: Qt.rgba(1, 1, 1, 0.18)
   property real borderWidth: 1
   property bool shadowEnabled: true
+  property string attachSide: "none" // "none" | "left" | "right"
 
-  // Total notch width is content width + 2 outer fillet wings
-  implicitWidth: Math.ceil(contentWidth + radius * 2)
-  implicitHeight: Math.ceil(contentHeight)
+  // Total notch width is content width + fillet wings
+  implicitWidth: {
+    if (attachSide === "left" || attachSide === "right") {
+      return Math.ceil(contentWidth + radius)
+    }
+    return Math.ceil(contentWidth + radius * 2)
+  }
+  implicitHeight: Math.ceil(contentHeight + (attachSide !== "none" ? radius : 0))
   width: implicitWidth
   height: implicitHeight
 
@@ -38,54 +44,68 @@ Item {
       startX: 0
       startY: 0
 
-      PathCubic {
-        x: notch.radius
-        y: notch.radius
-        control1X: notch.radius * 0.55
-        control1Y: 0
-        control2X: notch.radius
-        control2Y: notch.radius * 0.45
-      }
-
+      // --- Left side ---
       PathLine {
-        x: notch.radius
-        y: Math.max(notch.radius, notch.height - notch.radius)
+        x: 0
+        y: notch.attachSide === "left" ? (notch.contentHeight + notch.radius) : 0
       }
 
+      // Top-left fillet (when floating or attached right)
       PathCubic {
-        x: notch.radius * 2
-        y: notch.height
-        control1X: notch.radius
-        control1Y: notch.height - notch.radius * 0.45
-        control2X: notch.radius * 1.45
-        control2Y: notch.height
+        x: notch.attachSide === "left" ? notch.radius : notch.radius
+        y: notch.attachSide === "left" ? notch.contentHeight : notch.radius
+        control1X: notch.attachSide === "left" ? 0 : notch.radius * 0.55
+        control1Y: notch.attachSide === "left" ? (notch.contentHeight + notch.radius * 0.45) : 0
+        control2X: notch.attachSide === "left" ? notch.radius * 0.45 : notch.radius
+        control2Y: notch.attachSide === "left" ? notch.contentHeight : notch.radius * 0.45
       }
 
+      // Left vertical wall (when floating or attached right)
       PathLine {
-        x: Math.max(notch.radius * 2, notch.width - notch.radius * 2)
-        y: notch.height
+        x: notch.attachSide === "left" ? notch.radius : notch.radius
+        y: notch.attachSide === "left" ? notch.contentHeight : Math.max(notch.radius, notch.contentHeight - notch.radius)
       }
 
+      // Bottom-left corner (when floating or attached right)
       PathCubic {
-        x: notch.width - notch.radius
-        y: Math.max(notch.radius, notch.height - notch.radius)
-        control1X: notch.width - notch.radius * 1.45
-        control1Y: notch.height
-        control2X: notch.width - notch.radius
-        control2Y: notch.height - notch.radius * 0.45
+        x: notch.attachSide === "left" ? notch.radius : notch.radius * 2
+        y: notch.contentHeight
+        control1X: notch.attachSide === "left" ? notch.radius : notch.radius
+        control1Y: notch.attachSide === "left" ? notch.contentHeight : (notch.contentHeight - notch.radius * 0.45)
+        control2X: notch.attachSide === "left" ? notch.radius : notch.radius * 1.45
+        control2Y: notch.contentHeight
       }
 
+      // --- Bottom edge ---
       PathLine {
-        x: notch.width - notch.radius
-        y: notch.radius
+        x: notch.attachSide === "right" ? Math.max(notch.radius * 2, notch.width - notch.radius) : Math.max(notch.radius * 2, notch.width - notch.radius * 2)
+        y: notch.contentHeight
       }
 
+      // --- Right side ---
+      // Bottom-right corner or outward right fillet
+      PathCubic {
+        x: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        y: notch.attachSide === "right" ? (notch.contentHeight + notch.radius) : Math.max(notch.radius, notch.contentHeight - notch.radius)
+        control1X: notch.attachSide === "right" ? (notch.width - notch.radius * 0.45) : (notch.width - notch.radius * 1.45)
+        control1Y: notch.attachSide === "right" ? notch.contentHeight : notch.contentHeight
+        control2X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        control2Y: notch.attachSide === "right" ? (notch.contentHeight + notch.radius * 0.45) : (notch.contentHeight - notch.radius * 0.45)
+      }
+
+      // Right vertical wall
+      PathLine {
+        x: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        y: notch.attachSide === "right" ? 0 : notch.radius
+      }
+
+      // Top-right fillet (when floating or attached left)
       PathCubic {
         x: notch.width
         y: 0
-        control1X: notch.width - notch.radius
-        control1Y: notch.radius * 0.45
-        control2X: notch.width - notch.radius * 0.55
+        control1X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        control1Y: notch.attachSide === "right" ? 0 : (notch.radius * 0.45)
+        control2X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius * 0.55)
         control2Y: 0
       }
 
@@ -112,65 +132,65 @@ Item {
       startX: 0
       startY: 0
 
-      // Top-left concave outer fillet
-      PathCubic {
-        x: notch.radius
-        y: notch.radius
-        control1X: notch.radius * 0.55
-        control1Y: 0
-        control2X: notch.radius
-        control2Y: notch.radius * 0.45
-      }
-
-      // Left vertical wall
+      // --- Left side ---
       PathLine {
-        x: notch.radius
-        y: Math.max(notch.radius, notch.height - notch.radius)
+        x: 0
+        y: notch.attachSide === "left" ? (notch.contentHeight + notch.radius) : 0
       }
 
-      // Bottom-left convex corner
       PathCubic {
-        x: notch.radius * 2
-        y: notch.height
-        control1X: notch.radius
-        control1Y: notch.height - notch.radius * 0.45
-        control2X: notch.radius * 1.45
-        control2Y: notch.height
+        x: notch.attachSide === "left" ? notch.radius : notch.radius
+        y: notch.attachSide === "left" ? notch.contentHeight : notch.radius
+        control1X: notch.attachSide === "left" ? 0 : notch.radius * 0.55
+        control1Y: notch.attachSide === "left" ? (notch.contentHeight + notch.radius * 0.45) : 0
+        control2X: notch.attachSide === "left" ? notch.radius * 0.45 : notch.radius
+        control2Y: notch.attachSide === "left" ? notch.contentHeight : notch.radius * 0.45
       }
 
-      // Bottom horizontal edge
       PathLine {
-        x: Math.max(notch.radius * 2, notch.width - notch.radius * 2)
-        y: notch.height
+        x: notch.attachSide === "left" ? notch.radius : notch.radius
+        y: notch.attachSide === "left" ? notch.contentHeight : Math.max(notch.radius, notch.contentHeight - notch.radius)
       }
 
-      // Bottom-right convex corner
       PathCubic {
-        x: notch.width - notch.radius
-        y: Math.max(notch.radius, notch.height - notch.radius)
-        control1X: notch.width - notch.radius * 1.45
-        control1Y: notch.height
-        control2X: notch.width - notch.radius
-        control2Y: notch.height - notch.radius * 0.45
+        x: notch.attachSide === "left" ? notch.radius : notch.radius * 2
+        y: notch.contentHeight
+        control1X: notch.attachSide === "left" ? notch.radius : notch.radius
+        control1Y: notch.attachSide === "left" ? notch.contentHeight : (notch.contentHeight - notch.radius * 0.45)
+        control2X: notch.attachSide === "left" ? notch.radius : notch.radius * 1.45
+        control2Y: notch.contentHeight
       }
 
-      // Right vertical wall
+      // --- Bottom edge ---
       PathLine {
-        x: notch.width - notch.radius
-        y: notch.radius
+        x: notch.attachSide === "right" ? Math.max(notch.radius * 2, notch.width - notch.radius) : Math.max(notch.radius * 2, notch.width - notch.radius * 2)
+        y: notch.contentHeight
       }
 
-      // Top-right concave outer fillet
+      // --- Right side ---
+      PathCubic {
+        x: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        y: notch.attachSide === "right" ? (notch.contentHeight + notch.radius) : Math.max(notch.radius, notch.contentHeight - notch.radius)
+        control1X: notch.attachSide === "right" ? (notch.width - notch.radius * 0.45) : (notch.width - notch.radius * 1.45)
+        control1Y: notch.attachSide === "right" ? notch.contentHeight : notch.contentHeight
+        control2X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        control2Y: notch.attachSide === "right" ? (notch.contentHeight + notch.radius * 0.45) : (notch.contentHeight - notch.radius * 0.45)
+      }
+
+      PathLine {
+        x: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        y: notch.attachSide === "right" ? 0 : notch.radius
+      }
+
       PathCubic {
         x: notch.width
         y: 0
-        control1X: notch.width - notch.radius
-        control1Y: notch.radius * 0.45
-        control2X: notch.width - notch.radius * 0.55
+        control1X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        control1Y: notch.attachSide === "right" ? 0 : (notch.radius * 0.45)
+        control2X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius * 0.55)
         control2Y: 0
       }
 
-      // Close back along top bezel for fill
       PathLine {
         x: 0
         y: 0
@@ -187,57 +207,64 @@ Item {
       startX: 0
       startY: 0
 
-      PathCubic {
-        x: notch.radius
-        y: notch.radius
-        control1X: notch.radius * 0.55
-        control1Y: 0
-        control2X: notch.radius
-        control2Y: notch.radius * 0.45
-      }
-
+      // --- Left side ---
       PathLine {
-        x: notch.radius
-        y: Math.max(notch.radius, notch.height - notch.radius)
+        x: 0
+        y: notch.attachSide === "left" ? (notch.contentHeight + notch.radius) : 0
       }
 
       PathCubic {
-        x: notch.radius * 2
-        y: notch.height
-        control1X: notch.radius
-        control1Y: notch.height - notch.radius * 0.45
-        control2X: notch.radius * 1.45
-        control2Y: notch.height
+        x: notch.attachSide === "left" ? notch.radius : notch.radius
+        y: notch.attachSide === "left" ? notch.contentHeight : notch.radius
+        control1X: notch.attachSide === "left" ? 0 : notch.radius * 0.55
+        control1Y: notch.attachSide === "left" ? (notch.contentHeight + notch.radius * 0.45) : 0
+        control2X: notch.attachSide === "left" ? notch.radius * 0.45 : notch.radius
+        control2Y: notch.attachSide === "left" ? notch.contentHeight : notch.radius * 0.45
       }
 
       PathLine {
-        x: Math.max(notch.radius * 2, notch.width - notch.radius * 2)
-        y: notch.height
+        x: notch.attachSide === "left" ? notch.radius : notch.radius
+        y: notch.attachSide === "left" ? notch.contentHeight : Math.max(notch.radius, notch.contentHeight - notch.radius)
       }
 
       PathCubic {
-        x: notch.width - notch.radius
-        y: Math.max(notch.radius, notch.height - notch.radius)
-        control1X: notch.width - notch.radius * 1.45
-        control1Y: notch.height
-        control2X: notch.width - notch.radius
-        control2Y: notch.height - notch.radius * 0.45
+        x: notch.attachSide === "left" ? notch.radius : notch.radius * 2
+        y: notch.contentHeight
+        control1X: notch.attachSide === "left" ? notch.radius : notch.radius
+        control1Y: notch.attachSide === "left" ? notch.contentHeight : (notch.contentHeight - notch.radius * 0.45)
+        control2X: notch.attachSide === "left" ? notch.radius : notch.radius * 1.45
+        control2Y: notch.contentHeight
+      }
+
+      // --- Bottom edge ---
+      PathLine {
+        x: notch.attachSide === "right" ? Math.max(notch.radius * 2, notch.width - notch.radius) : Math.max(notch.radius * 2, notch.width - notch.radius * 2)
+        y: notch.contentHeight
+      }
+
+      // --- Right side ---
+      PathCubic {
+        x: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        y: notch.attachSide === "right" ? (notch.contentHeight + notch.radius) : Math.max(notch.radius, notch.contentHeight - notch.radius)
+        control1X: notch.attachSide === "right" ? (notch.width - notch.radius * 0.45) : (notch.width - notch.radius * 1.45)
+        control1Y: notch.attachSide === "right" ? notch.contentHeight : notch.contentHeight
+        control2X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        control2Y: notch.attachSide === "right" ? (notch.contentHeight + notch.radius * 0.45) : (notch.contentHeight - notch.radius * 0.45)
       }
 
       PathLine {
-        x: notch.width - notch.radius
-        y: notch.radius
+        x: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        y: notch.attachSide === "right" ? 0 : notch.radius
       }
 
       PathCubic {
         x: notch.width
         y: 0
-        control1X: notch.width - notch.radius
-        control1Y: notch.radius * 0.45
-        control2X: notch.width - notch.radius * 0.55
+        control1X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius)
+        control1Y: notch.attachSide === "right" ? 0 : (notch.radius * 0.45)
+        control2X: notch.attachSide === "right" ? notch.width : (notch.width - notch.radius * 0.55)
         control2Y: 0
       }
     }
   }
-
 }

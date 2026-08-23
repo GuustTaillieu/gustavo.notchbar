@@ -1,0 +1,25 @@
+#!/bin/bash
+# omarchy-notchbar-style [edge|island|toggle|reset]
+# Switches notchbar island styles between 'edge' (corner-attached) and 'island' (floating notches).
+
+set -e
+
+PRESET="${1:-toggle}"
+
+case "$PRESET" in
+  edge|island|toggle|reset)
+    RES=$(omarchy-shell island style "$PRESET" 2>/dev/null || omarchy-shell gustavo.bar style "$PRESET" 2>/dev/null || echo "error")
+    echo "Notchbar style: $RES"
+    ;;
+  -h|--help|help)
+    echo "Usage: omarchy-notchbar-style [edge|island|toggle|reset]"
+    echo "  edge   - Sticks left/right islands to screen edges with corner fillets"
+    echo "  island - Floats all islands with dual top arcs"
+    echo "  toggle - Toggles between edge and island styles"
+    echo "  reset  - Resets to default positions"
+    ;;
+  *)
+    echo "Usage: omarchy-notchbar-style [edge|island|toggle|reset]" >&2
+    exit 1
+    ;;
+esac
