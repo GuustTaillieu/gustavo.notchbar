@@ -22,20 +22,6 @@ Item {
   readonly property color islandForeground: (root && root.barForeground) ? root.barForeground : Color.bar.text
   readonly property color islandThemeForeground: (root && root.themeForeground) ? root.themeForeground : Color.foreground
 
-
-
-  function toggleSearch() {
-    if (root) root.isSearchOpen = !root.isSearchOpen
-  }
-
-  function openSearch() {
-    if (root) root.isSearchOpen = true
-  }
-
-  function closeSearch() {
-    if (root) root.isSearchOpen = false
-  }
-
   property bool isMediaOpen: false
 
   function toggleMedia() {
@@ -149,13 +135,13 @@ Item {
   property string mediaOsdIcon: "󰐊"
 
   function triggerOsd(mode) {
-    if (centerIsland.isSearchOpen || centerIsland.isHistoryOpen) return
+    if (centerIsland.isMenuOpen || centerIsland.isHistoryOpen) return
     osdMode = mode
     osdTimer.restart()
   }
 
   function handleExternalOsd(data) {
-    if (!data || centerIsland.isSearchOpen || centerIsland.isHistoryOpen) return
+    if (!data || centerIsland.isMenuOpen || centerIsland.isHistoryOpen) return
     var key = String(data.iconKey || "").toLowerCase()
     var msg = String(data.message || "")
     var val = data.value
@@ -306,19 +292,70 @@ Item {
     }
   }
 
-  // ------------------------------------------------------------- Menu Model & Search Integration
+  // =========================================================================
+  // FULL OMARCHY MENU ENGINE & SUBMENU DRILLDOWN (Future-Proof Integration)
+  // =========================================================================
   property string defaultMenuPath: (root && root.omarchyPath ? root.omarchyPath : "/usr/share/omarchy") + "/default/omarchy/omarchy-menu.jsonc"
   property string userMenuPath: Quickshell.env("HOME") + "/.config/omarchy/extensions/omarchy-menu.jsonc"
   property var defaultMenuItems: []
   property var userMenuItems: []
-  property var menuSource: MenuModel.mergeMenuSources(defaultMenuItems, userMenuItems)
+  property var items: ({})
+  property var itemOrder: []
+  property bool rowsLoaded: false
+
+  property string activeMenu: "root"
+  property var navStack: []
+  property string filterText: ""
+  property int selectedIndex: 0
+  property bool cursorActive: true
+  property bool menuOpenInternal: false
+  readonly property bool isMenuOpen: (root && root.isMenuOpen) || menuOpenInternal || isSearchOpen
+
+  property var whenResults: ({})
+  property var checkedResults: ({})
+  property bool guardsPending: false
+
+  property var providersLoaded: ({})
+  property var providerQueue: []
+  property int providerRevision: 0
+
+  property string dmenuMode: ""
+  property string dmenuPrompt: ""
+  property var dmenuOptions: []
+  property string selectionFile: ""
+  property string doneFile: ""
+  property bool requestActive: false
+  property int requestSerial: 0
+  property int applySerial: 0
+
+  property bool deleteConfirmOpen: false
+  property var deleteTarget: null
+  property bool searchDivider: false
+
+  readonly property var providers: ({
+    "fonts": {
+      script: "current=$(omarchy-font-current 2>/dev/null); omarchy-font-list 2>/dev/null | while read -r f; do [[ -z $f ]] && continue; printf '%s\\t%s\\t%s\\n' \"$f\" \"$f\" \"$current\"; done",
+      icon: "",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-font-set " + Util.shellQuote(value) }
+    },
+    "power-profiles": {
+      script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
+      icon: "\udb81\udc0b",
+      actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+    }
+  })
 
   FileView {
     id: defaultMenuFile
     path: centerIsland.defaultMenuPath
     watchChanges: true
     printErrors: false
-    onLoaded: centerIsland.defaultMenuItems = MenuModel.parseMenuJsonc(text())
+    onLoaded: {
+      centerIsland.defaultMenuItems = MenuModel.parseMenuJsonc(text())
+      centerIsland.rebuildItemsFromSources()
+    }
+    onFileChanged: reload()
   }
 
   FileView {
@@ -326,119 +363,604 @@ Item {
     path: centerIsland.userMenuPath
     watchChanges: true
     printErrors: false
-    onLoaded: centerIsland.userMenuItems = MenuModel.parseMenuJsonc(text())
+    onLoaded: {
+      centerIsland.userMenuItems = MenuModel.parseMenuJsonc(text())
+      centerIsland.rebuildItemsFromSources()
+    }
+    onLoadFailed: {
+      centerIsland.userMenuItems = []
+      centerIsland.rebuildItemsFromSources()
+    }
+    onFileChanged: reload()
   }
 
-  // Unified Search Results Provider (Apps + System Toggles + Settings + Actions)
-  function getSearchResults(query) {
-    var results = []
-    var cleanQuery = String(query || "").trim().toLowerCase()
+  function rebuildItemsFromSources() {
+    var merged = MenuModel.mergeMenuSources(centerIsland.defaultMenuItems, centerIsland.userMenuItems)
+    centerIsland.providerRevision += 1
+    centerIsland.providersLoaded = ({})
+    centerIsland.providerQueue = []
+    centerIsland.items = merged.items
+    centerIsland.itemOrder = merged.itemOrder
+    centerIsland.rowsLoaded = true
+    centerIsland.evaluateGuards()
+    if (centerIsland.isMenuOpen) {
+      centerIsland.rebuildDisplay()
+      if (!centerIsland.dmenuMode) {
+        if (centerIsland.filterText.trim()) centerIsland.loadProvidersForSearch()
+        else centerIsland.loadProviderForMenu(centerIsland.activeMenu)
+      }
+    }
+  }
 
-    // 1. Applications from AppLibrary
-    if (root && root.shell && root.shell.appLibrary) {
-      var appEntries = root.shell.appLibrary.sortedEntries(query)
-      for (var a = 0; a < appEntries.length; a++) {
-        var raw = appEntries[a]
-        var entry = (raw && raw.entry) ? raw.entry : raw
-        if (!entry) continue
-        var appId = String(entry.id || entry.appId || "")
-        var appName = root.shell.appLibrary.entryName(entry) || entry.name || entry.label || appId
-        var appSubtext = root.shell.appLibrary.entrySubtext(entry) || entry.subtext || entry.description || "Application"
-        var appIcon = root.shell.appLibrary.iconSource(entry.icon || entry.appIcon) || ""
+  function evaluateGuards() {
+    if (guardProc.running) {
+      centerIsland.guardsPending = true
+      return
+    }
+    centerIsland.guardsPending = false
 
-        results.push({
-          isApp: true,
-          appId: appId,
-          name: appName,
-          detail: appSubtext,
-          iconSource: appIcon,
-          iconGlyph: "",
+    var script = MenuModel.guardScript(centerIsland.items)
+    if (!script) {
+      centerIsland.whenResults = ({})
+      centerIsland.checkedResults = ({})
+      return
+    }
+    guardProc.collected = ""
+    guardProc.command = ["bash", "-lc", script]
+    guardProc.running = true
+  }
+
+  Process {
+    id: guardProc
+    property string collected: ""
+    stdout: SplitParser {
+      onRead: function(data) { guardProc.collected += data + "\n" }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0 || exitStatus !== 0) {
+        if (centerIsland.guardsPending) Qt.callLater(function() { centerIsland.evaluateGuards() })
+        return
+      }
+
+      var nextWhen = ({})
+      var nextChecked = ({})
+      var lines = guardProc.collected.split("\n")
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim()
+        if (!line) continue
+        var colon = line.lastIndexOf(":")
+        if (colon < 0) continue
+        var value = line.substring(colon + 1) === "1"
+        var rest = line.substring(0, colon)
+        var tagAt = rest.lastIndexOf(":")
+        if (tagAt < 0) continue
+        var id = rest.substring(0, tagAt)
+        var tag = rest.substring(tagAt + 1)
+        if (tag === "w") nextWhen[id] = value
+        else if (tag === "c") nextChecked[id] = value
+      }
+      centerIsland.whenResults = nextWhen
+      centerIsland.checkedResults = nextChecked
+      if (centerIsland.isMenuOpen) centerIsland.rebuildDisplay()
+      if (centerIsland.guardsPending) Qt.callLater(function() { centerIsland.evaluateGuards() })
+    }
+  }
+
+  function mergeAppRows() {
+    if (!root || !root.shell || !root.shell.appLibrary) return
+    var rows = root.shell.appLibrary.sortedEntries("")
+    var appRows = []
+    for (var j = 0; j < rows.length; j++) {
+      var entry = (rows[j] && rows[j].entry) ? rows[j].entry : rows[j]
+      if (!entry) continue
+      var appId = String(entry.id || entry.appId || "")
+      if (!appId) continue
+      var subtext = root.shell.appLibrary.entrySubtext(entry) || entry.subtext || entry.description || "Application"
+      var aliases = subtext ? [subtext] : []
+      try {
+        if (entry.keywords && typeof entry.keywords.join === "function") aliases = aliases.concat(entry.keywords)
+      } catch (e) { }
+      appRows.push({
+        id: "apps." + appId,
+        parent: "apps",
+        kind: "app",
+        icon: "",
+        appIcon: String(entry.icon || entry.appIcon || ""),
+        appId: appId,
+        label: root.shell.appLibrary.entryName(entry) || entry.name || entry.label || appId,
+        title: "",
+        target: "",
+        description: subtext,
+        action: "",
+        provider: "",
+        aliases: aliases,
+        when: "",
+        checked: "",
+        order: 0
+      })
+    }
+
+    var merged = MenuModel.mergeAppRows(centerIsland.items, centerIsland.itemOrder, appRows)
+    centerIsland.items = merged.items
+    centerIsland.itemOrder = merged.itemOrder
+    if (centerIsland.isMenuOpen) centerIsland.rebuildDisplay()
+  }
+
+  function startProviderForMenu(id) {
+    var entry = MenuModel.item(centerIsland.items, id)
+    if (!entry || !entry.provider || centerIsland.providersLoaded[id]) return
+    if (entry.provider === "apps") {
+      centerIsland.providersLoaded[id] = true
+      centerIsland.mergeAppRows()
+      return
+    }
+    var spec = centerIsland.providers[entry.provider]
+    if (!spec) return
+
+    centerIsland.providersLoaded[id] = true
+    providerProc.menuId = id
+    providerProc.providerKey = entry.provider
+    providerProc.revision = centerIsland.providerRevision
+    providerProc.collected = ""
+    providerProc.command = ["bash", "-lc", spec.script]
+    providerProc.running = true
+  }
+
+  function mergeProviderRows(rows, menuId, providerKey) {
+    var spec = centerIsland.providers[providerKey]
+    if (!spec) return
+    var lines = String(rows || "").split("\n")
+    var providerRows = []
+    var takenIds = ({})
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim()
+      if (!line) continue
+      var parts = line.split("\t")
+      var label = parts[0] || ""
+      var value = parts[1] || parts[0] || ""
+      var current = parts[2] || ""
+      if (!label) continue
+      var rowId = menuId + "." + MenuModel.slugify(value)
+      while (takenIds[rowId]) rowId += "-"
+      takenIds[rowId] = true
+
+      providerRows.push({
+        id: rowId,
+        parent: menuId,
+        kind: "action",
+        icon: (value === current) ? "✓" : (spec.icon || ""),
+        label: label,
+        title: "",
+        target: "",
+        description: "",
+        action: spec.actionFor(value),
+        provider: "",
+        aliases: [],
+        when: "",
+        checked: "",
+        order: 0
+      })
+    }
+    var merged = MenuModel.swapProviderRows(centerIsland.items, centerIsland.itemOrder, menuId, providerRows)
+    centerIsland.items = merged.items
+    centerIsland.itemOrder = merged.itemOrder
+    if (centerIsland.isMenuOpen) centerIsland.rebuildDisplay()
+  }
+
+  function startNextProvider() {
+    if (providerProc.running) return
+    while (centerIsland.providerQueue.length > 0) {
+      var id = centerIsland.providerQueue.shift()
+      var entry = MenuModel.item(centerIsland.items, id)
+      if (!entry || !entry.provider || centerIsland.providersLoaded[id]) continue
+      centerIsland.startProviderForMenu(id)
+      return
+    }
+  }
+
+  function invalidateVolatileProvider(id) {
+    var entry = MenuModel.item(centerIsland.items, id)
+    var spec = entry && entry.provider ? centerIsland.providers[entry.provider] : null
+    if (spec && spec.volatile) centerIsland.providersLoaded[id] = false
+  }
+
+  function loadProviderForMenu(id) {
+    var entry = MenuModel.item(centerIsland.items, id)
+    if (!entry || !entry.provider || centerIsland.providersLoaded[id]) return
+    if (entry.provider === "apps") {
+      centerIsland.startProviderForMenu(id)
+      return
+    }
+    if (providerProc.running) {
+      if (centerIsland.providerQueue.indexOf(id) < 0) centerIsland.providerQueue = centerIsland.providerQueue.concat([id])
+      return
+    }
+    centerIsland.startProviderForMenu(id)
+  }
+
+  function loadProvidersForSearch() {
+    var active = MenuModel.item(centerIsland.items, centerIsland.activeMenu) ? centerIsland.activeMenu : "root"
+    for (var i = 0; i < centerIsland.itemOrder.length; i++) {
+      var entry = MenuModel.item(centerIsland.items, centerIsland.itemOrder[i])
+      if (!entry || !entry.provider || centerIsland.providersLoaded[entry.id]) continue
+      if (active !== "root" && entry.id !== active && !MenuModel.isDescendantOf(centerIsland.items, entry.id, active)) continue
+      centerIsland.loadProviderForMenu(entry.id)
+    }
+  }
+
+  Process {
+    id: providerProc
+    property string menuId: ""
+    property string providerKey: ""
+    property string collected: ""
+    property int revision: 0
+    stdout: SplitParser {
+      onRead: function(data) { providerProc.collected += data + "\n" }
+    }
+    onExited: {
+      if (providerProc.revision === centerIsland.providerRevision) {
+        centerIsland.mergeProviderRows(providerProc.collected, providerProc.menuId, providerProc.providerKey)
+        if (centerIsland.filterText.trim()) centerIsland.loadProvidersForSearch()
+      }
+      centerIsland.startNextProvider()
+    }
+  }
+
+  Process {
+    id: resultProc
+    onExited: {
+      if (centerIsland.applySerial === centerIsland.requestSerial)
+        centerIsland.closeMenu()
+    }
+  }
+
+  ListModel {
+    id: menuDisplayModel
+  }
+
+  function rebuildDisplay() {
+    menuDisplayModel.clear()
+    centerIsland.searchDivider = false
+
+    if (centerIsland.dmenuMode) {
+      if (centerIsland.dmenuMode === "input") return
+      var dquery = centerIsland.filterText.trim().toLowerCase()
+      for (var i = 0; i < centerIsland.dmenuOptions.length; i++) {
+        var parts = String(centerIsland.dmenuOptions[i] || "").split("\t")
+        var icon = parts.length > 1 ? parts.shift() : ""
+        var label = parts.shift() || ""
+        var detail = parts.join("\t")
+        if (dquery && label.toLowerCase().indexOf(dquery) < 0 && detail.toLowerCase().indexOf(dquery) < 0) continue
+        menuDisplayModel.append({
+          itemId: "dmenu." + i,
+          kind: "dmenu",
+          icon: icon,
+          iconFont: "",
+          appIcon: "",
+          appId: "",
+          label: label,
+          target: "",
+          detail: detail,
+          path: "",
+          childCount: 0,
           action: "",
-          score: (raw && typeof raw.score === "number") ? raw.score : a
+          provider: "",
+          score: i,
+          section: ""
+        })
+      }
+      centerIsland.clampSelectedIndex()
+      return
+    }
+
+    if (!centerIsland.rowsLoaded) return
+
+    var active = MenuModel.item(centerIsland.items, centerIsland.activeMenu) ? centerIsland.activeMenu : "root"
+    centerIsland.activeMenu = active
+    var rows = []
+    var query = centerIsland.filterText.trim()
+
+    if (query) {
+      var currentRows = []
+      var drilldownRows = []
+
+      for (var i = 0; i < centerIsland.itemOrder.length; i++) {
+        var entry = MenuModel.item(centerIsland.items, centerIsland.itemOrder[i])
+        if (!entry || entry.id === "root") continue
+        if (!MenuModel.isDescendantOf(centerIsland.items, entry.id, active)) continue
+        if (!MenuModel.matchesQuery(entry, query, MenuModel.isVisible(centerIsland.items, centerIsland.itemOrder, centerIsland.whenResults, entry))) continue
+
+        var detail = MenuModel.parentPathFor(centerIsland.items, entry.id)
+        var row = MenuModel.displayRow(centerIsland.items, centerIsland.itemOrder, centerIsland.checkedResults, entry, detail, MenuModel.searchScore(centerIsland.items, entry, query))
+        if (entry.parent === active) currentRows.push(row)
+        else drilldownRows.push(row)
+      }
+
+      var searchSort = function(a, b) {
+        if (a.score !== b.score) return a.score - b.score
+        return a.path.localeCompare(b.path)
+      }
+
+      currentRows.sort(searchSort)
+      drilldownRows.sort(searchSort)
+      centerIsland.searchDivider = currentRows.length > 0 && drilldownRows.length > 0
+      if (centerIsland.searchDivider) {
+        for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
+      }
+      rows = currentRows.concat(drilldownRows)
+    } else {
+      for (var j = 0; j < centerIsland.itemOrder.length; j++) {
+        var child = MenuModel.item(centerIsland.items, centerIsland.itemOrder[j])
+        if (!child || child.parent !== active) continue
+        if (!MenuModel.isVisible(centerIsland.items, centerIsland.itemOrder, centerIsland.whenResults, child)) continue
+        rows.push(MenuModel.displayRow(centerIsland.items, centerIsland.itemOrder, centerIsland.checkedResults, child, child.description, child.order))
+      }
+
+      if (active === "apps") {
+        rows.sort(function(a, b) {
+          var aLabel = String(a.label || "").toLowerCase()
+          var bLabel = String(b.label || "").toLowerCase()
+          if (aLabel < bLabel) return -1
+          if (aLabel > bLabel) return 1
+          return 0
         })
       }
     }
 
-    // 2. Menu Items from omarchy-menu (Settings, Toggles, Actions, Submenus)
-    if (centerIsland.menuSource && centerIsland.menuSource.items) {
-      var items = centerIsland.menuSource.items
-      var order = centerIsland.menuSource.itemOrder || Object.keys(items)
-
-      for (var m = 0; m < order.length; m++) {
-        var id = order[m]
-        var item = items[id]
-        if (!item || id === "root" || id === "apps") continue
-
-        var label = String(item.label || id)
-        var desc = String(item.description || item.title || "")
-        var aliases = item.aliases || []
-        var action = String(item.action || "")
-
-        // Filter based on query
-        var match = false
-        var score = 100
-        if (!cleanQuery) {
-          // When no query, show root-level or top helpful actions
-          if (item.parent === "root" || item.parent === "system" || item.parent === "trigger.capture") {
-            match = true
-            score = m + 20
-          }
-        } else {
-          var labelLower = label.toLowerCase()
-          var idLower = id.toLowerCase()
-          var descLower = desc.toLowerCase()
-
-          if (labelLower.indexOf(cleanQuery) === 0) {
-            match = true
-            score = 10
-          } else if (labelLower.indexOf(cleanQuery) > 0) {
-            match = true
-            score = 25
-          } else if (idLower.indexOf(cleanQuery) >= 0) {
-            match = true
-            score = 30
-          } else if (descLower.indexOf(cleanQuery) >= 0) {
-            match = true
-            score = 40
-          } else {
-            for (var al = 0; al < aliases.length; al++) {
-              if (String(aliases[al]).toLowerCase().indexOf(cleanQuery) >= 0) {
-                match = true
-                score = 20
-                break
-              }
-            }
-          }
-        }
-
-        if (match) {
-          var parentPath = id.indexOf(".") >= 0 ? id.split(".").slice(0, -1).join(" › ") : "Omarchy"
-          results.push({
-            isApp: false,
-            appId: "",
-            name: label,
-            detail: desc ? desc : (action ? ("Command: " + action) : parentPath),
-            iconSource: "",
-            iconGlyph: item.icon || "󰒓",
-            action: action ? action : ("omarchy-menu toggle " + id),
-            score: score
-          })
-        }
-      }
+    for (var k = 0; k < rows.length; k++) {
+      menuDisplayModel.append(rows[k])
     }
-
-    // Sort results by score
-    results.sort(function(x, y) {
-      if (x.score !== y.score) return x.score - y.score
-      return x.name.localeCompare(y.name)
-    })
-
-    return results
+    centerIsland.clampSelectedIndex()
   }
 
-  // Current display mode: "search" | "history" | "volume" | "brightness" | "notification" | "media" | "date-clock" | "clock"
+  function clampSelectedIndex() {
+    if (menuDisplayModel.count === 0) selectedIndex = 0
+    else if (selectedIndex >= menuDisplayModel.count) selectedIndex = menuDisplayModel.count - 1
+    else if (selectedIndex < 0) selectedIndex = 0
+
+    Qt.callLater(function() {
+      if (menuDisplayModel.count > 0 && menuListView) {
+        menuListView.positionViewAtIndex(centerIsland.selectedIndex, ListView.Contain)
+      }
+    })
+  }
+
+  function select(delta) {
+    if (menuDisplayModel.count === 0) return
+    centerIsland.cursorActive = true
+    centerIsland.selectedIndex = (centerIsland.selectedIndex + delta + menuDisplayModel.count) % menuDisplayModel.count
+    if (menuListView) menuListView.positionViewAtIndex(centerIsland.selectedIndex, ListView.Contain)
+  }
+
+  function setFilter(text) {
+    centerIsland.filterText = text
+    centerIsland.selectedIndex = 0
+    centerIsland.cursorActive = true
+    if (!centerIsland.dmenuMode && centerIsland.filterText.trim()) centerIsland.loadProvidersForSearch()
+    centerIsland.rebuildDisplay()
+  }
+
+  function setActiveMenu(id, pushHistory) {
+    if (!MenuModel.item(centerIsland.items, id)) id = "root"
+    if (pushHistory && id !== centerIsland.activeMenu) {
+      centerIsland.navStack = centerIsland.navStack.concat([centerIsland.activeMenu])
+    }
+    centerIsland.activeMenu = id
+    centerIsland.filterText = ""
+    centerIsland.selectedIndex = 0
+    centerIsland.cursorActive = true
+    centerIsland.rebuildDisplay()
+    centerIsland.invalidateVolatileProvider(id)
+    centerIsland.loadProviderForMenu(id)
+  }
+
+  function goBack() {
+    if (centerIsland.filterText) {
+      centerIsland.setFilter("")
+      return true
+    }
+    if (centerIsland.activeMenu === "root") {
+      centerIsland.closeMenu()
+      return false
+    }
+    if (centerIsland.navStack.length > 0) {
+      var prev = centerIsland.navStack[centerIsland.navStack.length - 1]
+      centerIsland.navStack = centerIsland.navStack.slice(0, centerIsland.navStack.length - 1)
+      centerIsland.setActiveMenu(prev, false)
+      return true
+    }
+    var entry = MenuModel.item(centerIsland.items, centerIsland.activeMenu)
+    centerIsland.setActiveMenu((entry && entry.parent) ? entry.parent : "root", false)
+    return true
+  }
+
+  function activateIndex(index) {
+    if (centerIsland.deleteConfirmOpen) return
+    if (centerIsland.dmenuMode) {
+      if (centerIsland.dmenuMode === "input") {
+        centerIsland.applyDmenuSelection(centerIsland.filterText)
+        return
+      }
+      if (index < 0 || index >= menuDisplayModel.count) return
+      var picked = menuDisplayModel.get(index)
+      centerIsland.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
+      return
+    }
+
+    if (index < 0 || index >= menuDisplayModel.count) return
+    var row = menuDisplayModel.get(index)
+    if (row.kind === "menu" || row.kind === "link") {
+      centerIsland.setActiveMenu(row.target || row.itemId, true)
+    } else if (row.kind === "app") {
+      var appId = row.appId
+      var label = row.label
+      centerIsland.closeMenu()
+      if (root && root.shell && root.shell.appLibrary) {
+        root.shell.appLibrary.launch(appId, label)
+      }
+    } else {
+      centerIsland.applySelected(row.itemId, row.action)
+    }
+  }
+
+  function applySelected(id, action) {
+    centerIsland.closeMenu()
+    if (action) {
+      Util.execDetached(action)
+    }
+  }
+
+  function applyDmenuSelection(val) {
+    centerIsland.applySerial = centerIsland.requestSerial
+    centerIsland.finishRequest(val)
+    centerIsland.closeMenu()
+  }
+
+  function finishRequest(selection) {
+    if (!centerIsland.requestActive || !centerIsland.doneFile) {
+      centerIsland.closeMenu()
+      return
+    }
+    var selFile = centerIsland.selectionFile
+    var dnFile = centerIsland.doneFile
+    centerIsland.requestActive = false
+    centerIsland.selectionFile = ""
+    centerIsland.doneFile = ""
+
+    if (selection === null || selection === undefined) {
+      resultProc.command = ["bash", "-c", ": > " + Util.shellQuote(dnFile)]
+    } else {
+      resultProc.command = ["bash", "-c", "printf '%s\\n' " + Util.shellQuote(selection) + " > " + Util.shellQuote(selFile) + "; : > " + Util.shellQuote(dnFile)]
+    }
+    resultProc.running = true
+  }
+
+  function openRoute(initialMenu) {
+    var id = MenuModel.resolveRoute(centerIsland.items, centerIsland.itemOrder, initialMenu)
+    var entry = MenuModel.item(centerIsland.items, id)
+    if (entry && entry.kind === "action" && entry.action) {
+      centerIsland.closeMenu()
+      Util.execDetached(entry.action)
+      return "ok"
+    }
+    if (entry && entry.kind === "link" && entry.target) id = entry.target
+
+    centerIsland.dmenuMode = ""
+    centerIsland.requestActive = false
+    centerIsland.activeMenu = centerIsland.items[id] ? id : "root"
+    centerIsland.navStack = []
+    centerIsland.filterText = ""
+    centerIsland.selectedIndex = 0
+    centerIsland.cursorActive = true
+    centerIsland.menuOpenInternal = true
+    if (root) {
+      root.isMenuOpen = true
+      root.isSearchOpen = false
+      root.isHistoryOpen = false
+    }
+    centerIsland.evaluateGuards()
+    centerIsland.rebuildDisplay()
+    centerIsland.invalidateVolatileProvider(centerIsland.activeMenu)
+    centerIsland.loadProviderForMenu(centerIsland.activeMenu)
+    if (root && root.shell && root.shell.appLibrary) {
+      root.shell.appLibrary.refreshIcons()
+    }
+    Qt.callLater(function() {
+      if (menuSearchInput) menuSearchInput.forceActiveFocus()
+    })
+    return "ok"
+  }
+
+  function openDmenu(payload) {
+    centerIsland.requestSerial += 1
+    centerIsland.dmenuMode = payload.mode === "input" ? "input" : "select"
+    centerIsland.dmenuPrompt = String(payload.prompt || (centerIsland.dmenuMode === "input" ? "Input" : "Select"))
+    centerIsland.dmenuOptions = Array.isArray(payload.options) ? payload.options : []
+    centerIsland.selectionFile = String(payload.selectionFile || "")
+    centerIsland.doneFile = String(payload.doneFile || "")
+    centerIsland.requestActive = !!centerIsland.doneFile
+    centerIsland.activeMenu = "root"
+    centerIsland.navStack = []
+    centerIsland.filterText = ""
+    centerIsland.selectedIndex = 0
+    centerIsland.cursorActive = centerIsland.dmenuMode !== "input"
+    centerIsland.menuOpenInternal = true
+    if (root) {
+      root.isMenuOpen = true
+      root.isSearchOpen = false
+      root.isHistoryOpen = false
+    }
+    centerIsland.rebuildDisplay()
+    Qt.callLater(function() {
+      if (menuSearchInput) menuSearchInput.forceActiveFocus()
+    })
+  }
+
+  function toggleMenu(route) {
+    var targetRoute = route || "root"
+    var resolvedId = MenuModel.resolveRoute(centerIsland.items, centerIsland.itemOrder, targetRoute)
+    if (centerIsland.isMenuOpen) {
+      if (targetRoute === "root" || centerIsland.activeMenu === resolvedId || centerIsland.activeMenu === targetRoute) {
+        centerIsland.closeMenu()
+      } else {
+        centerIsland.openRoute(targetRoute)
+      }
+    } else {
+      centerIsland.openRoute(targetRoute)
+    }
+  }
+
+  function closeMenu() {
+    if (centerIsland.dmenuMode && centerIsland.requestActive) {
+      centerIsland.finishRequest(null)
+    }
+    centerIsland.menuOpenInternal = false
+    centerIsland.dmenuMode = ""
+    centerIsland.filterText = ""
+    centerIsland.deleteConfirmOpen = false
+    centerIsland.deleteTarget = null
+    if (root) {
+      root.isMenuOpen = false
+      root.isSearchOpen = false
+    }
+  }
+
+  function refreshMenu() {
+    defaultMenuFile.reload()
+    userMenuFile.reload()
+    return "ok"
+  }
+
+  function requestDeleteSelected() {
+    if (centerIsland.selectedIndex < 0 || centerIsland.selectedIndex >= menuDisplayModel.count) return
+    var row = menuDisplayModel.get(centerIsland.selectedIndex)
+    if (!row || row.kind !== "app") return
+    centerIsland.deleteTarget = { appId: row.appId, label: row.label }
+    centerIsland.deleteConfirmOpen = true
+  }
+
+  function cancelDelete() {
+    centerIsland.deleteConfirmOpen = false
+    centerIsland.deleteTarget = null
+    Qt.callLater(function() {
+      if (menuSearchInput) menuSearchInput.forceActiveFocus()
+    })
+  }
+
+  function confirmDelete() {
+    var target = centerIsland.deleteTarget
+    centerIsland.deleteConfirmOpen = false
+    centerIsland.deleteTarget = null
+    if (!target) return
+    centerIsland.closeMenu()
+    if (root && root.shell && root.shell.appLibrary) {
+      root.shell.appLibrary.remove(target.appId, target.label)
+    }
+  }
+
+  // Current display mode
   readonly property string currentMode: {
-    if (centerIsland.isSearchOpen) return "search"
+    if (centerIsland.isMenuOpen) return "menu"
     if (centerIsland.isHistoryOpen) return "history"
     if (isOsdActive && osdMode !== "") return osdMode
     if (isNotificationActive && currentNotification) return "notification"
@@ -446,10 +968,14 @@ Item {
     return "clock"
   }
 
-  // Dimensions driven by mode with spacious airy padding
+  // Dynamic adaptive sizing
   readonly property real targetContentWidth: {
     switch (currentMode) {
-      case "search": return 520
+      case "menu":
+        if (centerIsland.dmenuMode !== "" || centerIsland.filterText.length > 0 || centerIsland.activeMenu === "style.font" || centerIsland.activeMenu === "trigger.capture.screenrecord" || centerIsland.activeMenu === "apps") {
+          return 500
+        }
+        return 340
       case "history": return 480
       case "volume":
       case "brightness": return 300
@@ -463,7 +989,17 @@ Item {
 
   readonly property real targetContentHeight: {
     switch (currentMode) {
-      case "search": return 420
+      case "menu":
+        if (centerIsland.dmenuMode === "input") return 76
+        if (menuDisplayModel.count === 0) return 130
+        var isScrollableList = centerIsland.activeMenu === "apps" || centerIsland.activeMenu === "style.font" || centerIsland.filterText.length > 0
+        if (isScrollableList) {
+          // Large app list, fonts, or search results: capped at 520px with smooth scrolling
+          return Math.min(520, Math.max(150, 56 + menuDisplayModel.count * 44 + (centerIsland.searchDivider ? 22 : 0)))
+        } else {
+          // Pure menu/submenu items (root, system, style, setup, etc.): full height without scrolling
+          return Math.min(850, Math.max(150, 56 + menuDisplayModel.count * 44 + (centerIsland.searchDivider ? 22 : 0)))
+        }
       case "history": return 400
       case "volume":
       case "brightness":
@@ -675,7 +1211,7 @@ Item {
         }
       }
 
-      // ------------------------------------------------------------- Mode 3: Media Player (Airy & Balanced with generous bottom space)
+      // ------------------------------------------------------------- Mode 3: Media Player
       Item {
         id: mediaView
         anchors.fill: parent
@@ -993,7 +1529,7 @@ Item {
         }
       }
 
-      // ------------------------------------------------------------- Mode 5.5: Media Action / Playback Status Pill
+      // ------------------------------------------------------------- Mode 5.5: Media Action Status Pill
       Item {
         id: mediaActionView
         anchors.fill: parent
@@ -1143,257 +1679,411 @@ Item {
         }
       }
 
-      // ------------------------------------------------------------- Mode 7: Seamless Integrated Morphing Search
+      // ------------------------------------------------------------- Mode 7: Unified Omarchy Island Menu & Submenu View
       Item {
-        id: searchView
+        id: menuView
         anchors.fill: parent
         anchors.leftMargin: 16
         anchors.rightMargin: 16
-        anchors.topMargin: 12
-        anchors.bottomMargin: 14
+        anchors.topMargin: 10
+        anchors.bottomMargin: 12
         clip: true
         visible: opacity > 0.01
-        opacity: centerIsland.currentMode === "search" ? 1.0 : 0.0
+        opacity: centerIsland.currentMode === "menu" ? 1.0 : 0.0
 
         Behavior on opacity {
           NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
         }
 
-        focus: centerIsland.isSearchOpen
-        Keys.onEscapePressed: {
-          centerIsland.closeSearch()
-          if (root) root.isSearchOpen = false
-        }
-
         ColumnLayout {
           anchors.fill: parent
-          spacing: Style.space(10)
+          spacing: Style.space(8)
 
-          // Search Input Box
+          // 1. Search & Breadcrumbs Navigation Header
           Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 42
+            Layout.preferredHeight: 38
             radius: 8
             color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.08)
-            border.color: searchInput.activeFocus ? (Color.accent || Qt.rgba(1,1,1,0.35)) : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
+            border.color: menuSearchInput.activeFocus ? (Color.accent || Qt.rgba(1,1,1,0.35)) : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
             border.width: 1
 
             RowLayout {
               anchors.fill: parent
-              anchors.leftMargin: 12
-              anchors.rightMargin: 12
-              spacing: Style.space(10)
+              anchors.leftMargin: 8
+              anchors.rightMargin: 10
+              spacing: Style.space(8)
 
+              // Back Navigation Button (visible when in a submenu and no active filter query)
+              Rectangle {
+                Layout.preferredWidth: 26
+                Layout.preferredHeight: 26
+                radius: 6
+                color: backMouse.containsMouse ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15) : "transparent"
+                visible: centerIsland.activeMenu !== "root" && !centerIsland.filterText
+
+                Text {
+                  anchors.centerIn: parent
+                  text: "‹"
+                  font.family: Style.font.family
+                  font.pixelSize: 18
+                  font.weight: Font.Bold
+                  color: Color.accent || centerIsland.islandForeground
+                }
+
+                MouseArea {
+                  id: backMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: centerIsland.goBack()
+                }
+              }
+
+              // Search Glyph Icon
               Text {
                 text: "󰍉"
                 font.family: Style.font.family
-                font.pixelSize: 16
+                font.pixelSize: 15
                 color: centerIsland.islandForeground
                 opacity: 0.75
+                visible: centerIsland.activeMenu === "root" || centerIsland.filterText.length > 0
               }
 
+              // Real Interactive Search & Command Input
               TextInput {
-                id: searchInput
+                id: menuSearchInput
                 Layout.fillWidth: true
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
                 color: centerIsland.islandForeground
                 selectionColor: Color.accent || Qt.rgba(0.2, 0.6, 1.0, 0.6)
                 clip: true
-                focus: centerIsland.isSearchOpen
-
-                Connections {
-                  target: centerIsland
-                  function onIsSearchOpenChanged() {
-                    if (centerIsland.isSearchOpen) {
-                      searchInput.text = ""
-                      if (root && root.shell && root.shell.appLibrary) {
-                        root.shell.appLibrary.refreshIcons()
-                      }
-                      Qt.callLater(function() { searchInput.forceActiveFocus() })
-                    }
+                text: centerIsland.filterText
+                onTextChanged: {
+                  if (text !== centerIsland.filterText) {
+                    centerIsland.setFilter(text)
                   }
                 }
 
                 Text {
                   anchors.fill: parent
-                  text: "Search applications, toggles, settings & commands..."
-                  font.family: searchInput.font.family
-                  font.pixelSize: searchInput.font.pixelSize
+                  text: centerIsland.dmenuMode
+                    ? (centerIsland.dmenuPrompt + "…")
+                    : (centerIsland.activeMenu !== "root"
+                        ? ("Search in " + (MenuModel.item(centerIsland.items, centerIsland.activeMenu) ? (MenuModel.item(centerIsland.items, centerIsland.activeMenu).label) : centerIsland.activeMenu) + "…")
+                        : "Search applications, toggles, settings & commands...")
+                  font.family: menuSearchInput.font.family
+                  font.pixelSize: menuSearchInput.font.pixelSize
                   color: centerIsland.islandForeground
                   opacity: 0.4
-                  visible: !searchInput.text && !searchInput.inputMethodComposing
+                  visible: !menuSearchInput.text && !menuSearchInput.inputMethodComposing
                 }
 
-                Keys.onEscapePressed: centerIsland.closeSearch()
-                Keys.onDownPressed: {
-                  if (appList.count > 0) {
-                    appList.currentIndex = (appList.currentIndex + 1) % appList.count
-                    appList.positionViewAtIndex(appList.currentIndex, ListView.Contain)
+                // Complete Keyboard Navigation & Vim (hjkl) Controls
+                Keys.onPressed: function(event) {
+                  if (centerIsland.deleteConfirmOpen) {
+                    if (menuDeleteConfirm.handleKey(event)) event.accepted = true
+                    return
+                  }
+
+                  if (event.key === Qt.Key_Delete) {
+                    centerIsland.requestDeleteSelected()
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Escape) {
+                    if (centerIsland.filterText) {
+                      centerIsland.setFilter("")
+                      menuSearchInput.text = ""
+                    } else if (centerIsland.activeMenu !== "root") {
+                      centerIsland.goBack()
+                    } else {
+                      centerIsland.closeMenu()
+                    }
+                    event.accepted = true
+                  } else if ((event.key === Qt.Key_H && (event.modifiers & Qt.ControlModifier)) || (event.key === Qt.Key_Left && !centerIsland.filterText)) {
+                    centerIsland.goBack()
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Backspace && !centerIsland.filterText) {
+                    centerIsland.goBack()
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Up || (event.key === Qt.Key_K && (event.modifiers & Qt.ControlModifier))) {
+                    centerIsland.select(-1)
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Down || (event.key === Qt.Key_J && (event.modifiers & Qt.ControlModifier))) {
+                    centerIsland.select(1)
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_PageUp) {
+                    centerIsland.select(-5)
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_PageDown) {
+                    centerIsland.select(5)
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier)) || (event.key === Qt.Key_Right && !centerIsland.filterText)) {
+                    if (menuDisplayModel.count > 0) {
+                      centerIsland.activateIndex(centerIsland.selectedIndex)
+                    } else if (centerIsland.dmenuMode === "input") {
+                      centerIsland.applyDmenuSelection(menuSearchInput.text)
+                    }
+                    event.accepted = true
                   }
                 }
-                Keys.onUpPressed: {
-                  if (appList.count > 0) {
-                    appList.currentIndex = (appList.currentIndex - 1 + appList.count) % appList.count
-                    appList.positionViewAtIndex(appList.currentIndex, ListView.Contain)
-                  }
-                }
-                Keys.onReturnPressed: {
-                  if (appList.currentItem && appList.currentItem.launchEntry) {
-                    appList.currentItem.launchEntry()
-                  }
-                }
-                onTextChanged: {
-                  appList.currentIndex = 0
-                  appList.positionViewAtBeginning()
+              }
+
+              // Breadcrumb Navigation Badge
+              Rectangle {
+                Layout.preferredHeight: 20
+                Layout.preferredWidth: breadcrumbText.implicitWidth + 12
+                radius: 5
+                color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.12)
+                visible: centerIsland.activeMenu !== "root" && !centerIsland.filterText
+
+                Text {
+                  id: breadcrumbText
+                  anchors.centerIn: parent
+                  text: MenuModel.pathFor(centerIsland.items, centerIsland.activeMenu)
+                  font.family: Style.font.family
+                  font.pixelSize: 10
+                  font.weight: Font.Bold
+                  color: Color.accent || centerIsland.islandForeground
+                  opacity: 0.9
+                  elide: Text.ElideRight
                 }
               }
             }
           }
 
-          // Search Results ListView
-          ListView {
-            id: appList
+          // 2. Menu Items / Search Results List
+          Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            spacing: 3
-            boundsBehavior: Flickable.StopAtBounds
-            highlightFollowsCurrentItem: true
-            highlightMoveDuration: 0
-            highlightResizeDuration: 0
-            preferredHighlightBegin: 0
-            preferredHighlightEnd: height
-            highlightRangeMode: ListView.ApplyRange
 
-            model: centerIsland.getSearchResults(searchInput.text)
+            ListView {
+              id: menuListView
+              anchors.fill: parent
+              model: menuDisplayModel
+              clip: true
+              spacing: 2
+              boundsBehavior: Flickable.StopAtBounds
+              highlightFollowsCurrentItem: true
+              highlightMoveDuration: 0
+              highlightResizeDuration: 0
 
-            delegate: Rectangle {
-              id: resultRow
-              width: appList.width
-              height: 48
-              radius: 6
-              color: isSelected ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15) : (rowMouse.containsMouse ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.06) : "transparent")
+              section.property: "section"
+              section.criteria: ViewSection.FullString
+              section.delegate: Item {
+                required property string section
+                width: ListView.view.width
+                height: section === "drilldown" ? 22 : 0
+                visible: section === "drilldown"
 
-              readonly property bool isSelected: appList.currentIndex === index
-              readonly property var itemData: modelData
-
-              function launchEntry() {
-                if (!itemData) return
-                if (itemData.isApp) {
-                  if (root && root.shell && root.shell.appLibrary) {
-                    root.shell.appLibrary.launch(itemData.appId, itemData.name)
-                  }
-                } else if (itemData.action) {
-                  Util.execDetached(itemData.action)
-                }
-                centerIsland.closeSearch()
-              }
-
-              // Active Accent Bar
-              Rectangle {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                anchors.margins: 4
-                width: 3
-                radius: 2
-                color: Color.accent || Qt.rgba(0.2, 0.8, 0.7, 1.0)
-                visible: resultRow.isSelected
-              }
-
-              RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 14
-                anchors.rightMargin: 12
-                spacing: Style.space(12)
-
-                // App Icon or System Glyph
-                Item {
-                  Layout.preferredWidth: 30
-                  Layout.preferredHeight: 30
-
-                  Image {
-                    anchors.fill: parent
-                    source: itemData.iconSource || ""
-                    fillMode: Image.PreserveAspectFit
-                    visible: itemData.iconSource !== ""
-                  }
+                RowLayout {
+                  anchors.fill: parent
+                  anchors.leftMargin: 6
+                  anchors.rightMargin: 6
+                  spacing: 6
 
                   Rectangle {
-                    anchors.fill: parent
-                    radius: 6
-                    color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.1)
-                    visible: !itemData.iconSource
-
-                    Text {
-                      anchors.centerIn: parent
-                      text: itemData.iconGlyph || "󰒓"
-                      font.family: Style.font.family
-                      font.pixelSize: 16
-                      color: centerIsland.islandForeground
-                    }
-                  }
-                }
-
-                ColumnLayout {
-                  Layout.fillWidth: true
-                  spacing: 1
-
-                  Text {
                     Layout.fillWidth: true
-                    text: itemData.name || ""
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.body
-                    font.weight: Font.DemiBold
-                    color: centerIsland.islandForeground
-                    elide: Text.ElideRight
+                    height: 1
+                    color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15)
                   }
 
                   Text {
-                    Layout.fillWidth: true
-                    text: itemData.detail || ""
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                    color: centerIsland.islandForeground
-                    opacity: 0.65
-                    elide: Text.ElideRight
-                    visible: text !== ""
-                  }
-                }
-
-                // Type Badge (App vs System Action)
-                Rectangle {
-                  Layout.preferredHeight: 18
-                  Layout.preferredWidth: badgeText.implicitWidth + 10
-                  radius: 4
-                  color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.08)
-                  visible: !itemData.isApp
-
-                  Text {
-                    id: badgeText
-                    anchors.centerIn: parent
-                    text: "Action"
+                    text: "Submenu Results"
                     font.family: Style.font.family
                     font.pixelSize: 10
                     font.weight: Font.Bold
                     color: Color.accent || centerIsland.islandForeground
-                    opacity: 0.8
+                    opacity: 0.7
+                  }
+
+                  Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15)
                   }
                 }
               }
 
-              MouseArea {
-                id: rowMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: {
-                  appList.currentIndex = index
-                  resultRow.launchEntry()
+              delegate: Rectangle {
+                id: menuItemRow
+                width: menuListView.width
+                height: 44
+                radius: 6
+                color: isSelected ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.16) : (itemMouse.containsMouse ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.07) : "transparent")
+
+                readonly property bool isSelected: centerIsland.cursorActive && centerIsland.selectedIndex === index
+                readonly property bool isMenuOrLink: model.kind === "menu" || model.kind === "link"
+                readonly property bool isApp: model.kind === "app"
+
+                // Active Selection Left Bar Indicator
+                Rectangle {
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  anchors.margins: 4
+                  width: 3
+                  radius: 2
+                  color: Color.accent || Qt.rgba(0.2, 0.8, 0.7, 1.0)
+                  visible: menuItemRow.isSelected
+                }
+
+                RowLayout {
+                  anchors.fill: parent
+                  anchors.leftMargin: 12
+                  anchors.rightMargin: 10
+                  spacing: Style.space(10)
+
+                  // Icon Box: App Icon or Font/Glyph Icon
+                  Item {
+                    Layout.preferredWidth: 26
+                    Layout.preferredHeight: 26
+
+                    Image {
+                      anchors.fill: parent
+                      source: (menuItemRow.isApp && root && root.shell && root.shell.appLibrary) ? root.shell.appLibrary.iconSource(model.appIcon) : ""
+                      fillMode: Image.PreserveAspectFit
+                      visible: menuItemRow.isApp && source !== ""
+                    }
+
+                    Rectangle {
+                      anchors.fill: parent
+                      radius: 6
+                      color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.1)
+                      visible: !menuItemRow.isApp || !model.appIcon
+
+                      Text {
+                        anchors.centerIn: parent
+                        text: model.icon ? model.icon : (menuItemRow.isMenuOrLink ? "󰅂" : "󰒓")
+                        font.family: model.iconFont ? model.iconFont : Style.font.family
+                        font.pixelSize: 15
+                        color: menuItemRow.isSelected ? (Color.accent || centerIsland.islandForeground) : centerIsland.islandForeground
+                      }
+                    }
+                  }
+
+                  // Label and Subtitle / Breadcrumb Path
+                  ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: model.label || ""
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.body
+                      font.weight: menuItemRow.isSelected ? Font.Bold : Font.Medium
+                      color: centerIsland.islandForeground
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: model.detail || ""
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.caption
+                      color: centerIsland.islandForeground
+                      opacity: 0.6
+                      elide: Text.ElideRight
+                      visible: text !== ""
+                    }
+                  }
+
+                  // Right Chevron for Submenus
+                  Text {
+                    text: "›"
+                    font.family: Style.font.family
+                    font.pixelSize: 16
+                    font.weight: Font.Bold
+                    color: centerIsland.islandForeground
+                    opacity: menuItemRow.isSelected ? 0.9 : 0.4
+                    visible: menuItemRow.isMenuOrLink
+                  }
+                }
+
+                MouseArea {
+                  id: itemMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onEntered: {
+                    centerIsland.cursorActive = true
+                    centerIsland.selectedIndex = index
+                  }
+                  onClicked: {
+                    centerIsland.cursorActive = true
+                    centerIsland.selectedIndex = index
+                    centerIsland.activateIndex(index)
+                  }
                 }
               }
             }
+
+            // Top Fade Scrim
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              height: 14
+              visible: menuListView.contentY > 0
+              gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.9) }
+                GradientStop { position: 1.0; color: "transparent" }
+              }
+            }
+
+            // Bottom Fade Scrim
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              height: 14
+              visible: (menuListView.contentY + menuListView.height) < menuListView.contentHeight
+              gradient: Gradient {
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 1.0; color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.9) }
+              }
+            }
+
+            // Empty Placeholder
+            ColumnLayout {
+              anchors.centerIn: parent
+              visible: menuDisplayModel.count === 0 && centerIsland.dmenuMode !== "input"
+              spacing: 6
+
+              Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: "󰍉"
+                font.family: Style.font.family
+                font.pixelSize: 28
+                color: centerIsland.islandForeground
+                opacity: 0.3
+              }
+
+              Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: centerIsland.filterText ? ("No matches for \"" + centerIsland.filterText + "\"") : "Empty Menu"
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                color: centerIsland.islandForeground
+                opacity: 0.6
+              }
+            }
           }
+        }
+
+        // Delete App Confirmation Dialog
+        ConfirmDialog {
+          id: menuDeleteConfirm
+          anchors.fill: parent
+          opened: centerIsland.deleteConfirmOpen
+          z: 30
+          message: "Do you want to uninstall " + ((centerIsland.deleteTarget && centerIsland.deleteTarget.label) || "this app") + "?"
+          confirmText: "Uninstall"
+          background: Color.bar.background
+          foreground: centerIsland.islandForeground
+          onCanceled: centerIsland.cancelDelete()
+          onConfirmed: centerIsland.confirmDelete()
         }
       }
 
@@ -1782,20 +2472,18 @@ Item {
     anchors.fill: parent
     hoverEnabled: true
     acceptedButtons: Qt.NoButton
-    visible: !centerIsland.isSearchOpen
+    visible: !centerIsland.isMenuOpen
     z: -1
 
     onWheel: function(wheel) {
       if (centerIsland.currentMode === "media") {
         if (wheel.angleDelta.y > 0) {
-          // Swiping up over expanded media player collapses it
           centerIsland.isMediaOpen = false
           return
         }
       }
 
       if (centerIsland.currentMode === "clock" && wheel.angleDelta.y < 0 && centerIsland.hasActiveMedia) {
-        // Swiping down over idle middle island pulls down media player
         centerIsland.isMediaOpen = true
         return
       }

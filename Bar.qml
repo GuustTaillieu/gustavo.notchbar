@@ -31,7 +31,39 @@ Item {
   property bool barHidden: false
   property bool manualReveal: false
   property bool isSearchOpen: false
+  property bool isMenuOpen: false
   property var centerIslandRef: null
+
+  function openMenu(route) {
+    root.isMenuOpen = true
+    root.isSearchOpen = false
+    root.isHistoryOpen = false
+    if (root.centerIslandRef) {
+      root.centerIslandRef.openRoute(route || "root")
+    }
+  }
+
+  function closeMenu() {
+    root.isMenuOpen = false
+    root.isSearchOpen = false
+    if (root.centerIslandRef) {
+      root.centerIslandRef.closeMenu()
+    }
+  }
+
+  function toggleMenu(route) {
+    if (root.centerIslandRef) {
+      root.centerIslandRef.toggleMenu(route || "root")
+    } else {
+      if (root.isMenuOpen) {
+        root.closeMenu()
+      } else {
+        root.openMenu(route || "root")
+      }
+    }
+  }
+
+
 
   function popoutBelongsToRegion(region) {
     if (!activePopout) return false
@@ -58,16 +90,18 @@ Item {
 
     function hide(): string {
       root.manualReveal = false
-      root.isSearchOpen = false
+      root.closeMenu()
       return "hidden"
     }
 
     function search(): string {
-      root.isSearchOpen = !root.isSearchOpen
-      if (root.centerIslandRef) {
-        root.centerIslandRef.isSearchOpen = root.isSearchOpen
-      }
-      return root.isSearchOpen ? "search-opened" : "search-closed"
+      root.openMenu("root")
+      return "search-opened"
+    }
+
+    function menu(route: string): string {
+      root.openMenu(route || "root")
+      return "menu-opened"
     }
   }
 
@@ -86,19 +120,60 @@ Item {
 
     function hide(): string {
       root.manualReveal = false
-      root.isSearchOpen = false
-      if (root.centerIslandRef) {
-        root.centerIslandRef.isSearchOpen = false
-      }
+      root.closeMenu()
       return "hidden"
     }
 
     function search(): string {
-      root.isSearchOpen = !root.isSearchOpen
-      if (root.centerIslandRef) {
-        root.centerIslandRef.isSearchOpen = root.isSearchOpen
+      root.openMenu("root")
+      return "search-opened"
+    }
+
+    function menu(route: string): string {
+      root.openMenu(route || "root")
+      return "menu-opened"
+    }
+  }
+
+  IpcHandler {
+    target: "omarchy.menu"
+
+    function toggle(payloadJson: string): string {
+      var payload = ({})
+      try { payload = JSON.parse(payloadJson || "{}") } catch(e) {}
+      var route = payload.menu || payload.initialMenu || "root"
+      if (payload.mode === "select" || payload.mode === "input") {
+        if (root.centerIslandRef) root.centerIslandRef.openDmenu(payload)
+      } else {
+        root.toggleMenu(route)
       }
-      return root.isSearchOpen ? "search-opened" : "search-closed"
+      return "ok"
+    }
+
+    function summon(payloadJson: string): string {
+      var payload = ({})
+      try { payload = JSON.parse(payloadJson || "{}") } catch(e) {}
+      var route = payload.menu || payload.initialMenu || "root"
+      if (payload.mode === "select" || payload.mode === "input") {
+        if (root.centerIslandRef) root.centerIslandRef.openDmenu(payload)
+      } else {
+        root.openMenu(route)
+      }
+      return "ok"
+    }
+
+    function close(): string {
+      root.closeMenu()
+      return "ok"
+    }
+
+    function refresh(): string {
+      if (root.centerIslandRef) root.centerIslandRef.refreshMenu()
+      return "ok"
+    }
+
+    function ping(): string {
+      return "ok"
     }
   }
   property string home: Quickshell.env("HOME")
@@ -591,6 +666,10 @@ Item {
   }
 
   function summonBarWidget(pluginId) {
+    if (pluginId === "omarchy.menu" || pluginId === "gustavo.notchbar" || pluginId === "gustavo.bar") {
+      root.openMenu("root")
+      return true
+    }
     var item = findPanelWidget(pluginId)
     if (!item || typeof item.open !== "function") return false
     item.open()
@@ -598,6 +677,10 @@ Item {
   }
 
   function hideBarWidget(pluginId) {
+    if (pluginId === "omarchy.menu" || pluginId === "gustavo.notchbar" || pluginId === "gustavo.bar") {
+      root.closeMenu()
+      return true
+    }
     var item = findPanelWidget(pluginId)
     if (!item || typeof item.close !== "function") return false
     item.close()
@@ -605,6 +688,9 @@ Item {
   }
 
   function isBarWidgetOpen(pluginId) {
+    if (pluginId === "omarchy.menu" || pluginId === "gustavo.notchbar" || pluginId === "gustavo.bar") {
+      return root.isMenuOpen
+    }
     var item = findPanelWidget(pluginId)
     return !!item && item.opened === true
   }
@@ -706,8 +792,25 @@ Item {
     }
   }
 
+  readonly property var defaultMenuLoader: (shell && shell.panelLoaders) ? shell.panelLoaders["omarchy.menu"] : null
+  readonly property var defaultMenuItem: defaultMenuLoader ? defaultMenuLoader.item : null
+
+  Connections {
+    target: root.defaultMenuItem
+    ignoreUnknownSignals: true
+    function onOpenedChanged() {
+      if (root.defaultMenuItem && root.defaultMenuItem.opened) {
+        var requestedRoute = root.defaultMenuItem.pendingInitialMenu || root.defaultMenuItem.activeMenu || "root"
+        root.defaultMenuItem.opened = false
+        root.toggleMenu(requestedRoute)
+      }
+    }
+  }
+
   readonly property var osdLoader: (shell && shell.panelLoaders) ? shell.panelLoaders["omarchy.osd"] : null
   readonly property var osdItem: osdLoader ? osdLoader.item : null
+
+
 
   Connections {
     target: root.osdItem
@@ -1476,8 +1579,9 @@ Item {
 
     property var barPluginRoot: null
     readonly property bool isSearchOpen: barPluginRoot ? barPluginRoot.isSearchOpen : false
+    readonly property bool isMenuOpen: barPluginRoot ? barPluginRoot.isMenuOpen : false
     readonly property bool isHistoryOpen: barPluginRoot ? barPluginRoot.isHistoryOpen : false
-    readonly property bool isExpanded: isSearchOpen || isHistoryOpen
+    readonly property bool isExpanded: isSearchOpen || isMenuOpen || isHistoryOpen
 
     visible: true
     exclusionMode: ExclusionMode.Ignore
@@ -1496,7 +1600,7 @@ Item {
 
     implicitHeight: centerWindow.isExpanded ? (screen ? screen.height : 0) : Math.ceil(centerIslandItem.implicitHeight + 8)
 
-    // Full screen click-outside dismissal scrim when search or history is open
+    // Full screen click-outside dismissal scrim when menu, search, or history is open
     MouseArea {
       id: outsideClickArea
       anchors.fill: parent
@@ -1504,7 +1608,7 @@ Item {
       hoverEnabled: true
       onClicked: {
         if (centerWindow.barPluginRoot) {
-          centerWindow.barPluginRoot.isSearchOpen = false
+          centerWindow.barPluginRoot.closeMenu()
           centerWindow.barPluginRoot.isHistoryOpen = false
         }
       }
