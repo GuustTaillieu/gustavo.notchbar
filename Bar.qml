@@ -1181,7 +1181,7 @@ Item {
   function dropBarModuleAtTarget(sourceSlot, targetSlot, afterTarget) {
     if (!sourceSlot || !targetSlot) return false
 
-    var beforeName = afterTarget ? nextVisibleModuleName(targetSlot.region, targetSlot.moduleName, sourceSlot) : targetSlot.moduleName
+    var beforeName = (targetSlot.moduleName === "" || targetSlot.moduleName === undefined) ? "" : (afterTarget ? nextVisibleModuleName(targetSlot.region, targetSlot.moduleName, sourceSlot) : targetSlot.moduleName)
     return dropBarModule(sourceSlot, targetSlot.region, beforeName)
   }
 
@@ -1449,21 +1449,21 @@ Item {
       Region {
         x: 0
         y: 0
-        width: Math.ceil(leftNotch.width + leftNotch.anchors.leftMargin)
-        height: Math.ceil(leftNotch.height + 4)
+        width: leftNotch.contentWidth > 0 ? Math.ceil(leftNotch.width + leftNotch.anchors.leftMargin) : 0
+        height: leftNotch.contentWidth > 0 ? Math.ceil(leftNotch.height + 4) : 0
       }
 
       // 2. Right Notch body
       Region {
         intersection: Intersection.Combine
-        x: Math.max(0, Math.floor(barWindow.width - rightNotch.width - rightNotch.anchors.rightMargin))
+        x: rightNotch.contentWidth > 0 ? Math.max(0, Math.floor(barWindow.width - rightNotch.width - rightNotch.anchors.rightMargin)) : 0
         y: 0
-        width: Math.ceil(rightNotch.width + rightNotch.anchors.rightMargin)
-        height: Math.ceil(rightNotch.height + 4)
+        width: rightNotch.contentWidth > 0 ? Math.ceil(rightNotch.width + rightNotch.anchors.rightMargin) : 0
+        height: rightNotch.contentWidth > 0 ? Math.ceil(rightNotch.height + 4) : 0
       }
     }
 
-    // ------------------------------------------------------------- 1. Left Island Notch (Always on screen)
+    // ------------------------------------------------------------- 1. Left Island Notch (Auto-collapses when empty)
     NotchSurface {
       id: leftNotch
       z: 10
@@ -1471,14 +1471,24 @@ Item {
       anchors.leftMargin: 8
       anchors.top: parent.top
       radius: 8
+      visible: contentWidth > 0
+      opacity: contentWidth > 0 ? 1.0 : 0.0
       color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
       borderColor: Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.18)
       borderWidth: 1
-      contentWidth: Math.max(60, leftModules.implicitWidth + Style.space(12))
+      contentWidth: {
+        var hasWidgets = leftModules.entries && leftModules.entries.length > 0
+        var isDragging = root.barDragSource !== null
+        if (!hasWidgets && !isDragging) return 0
+        return Math.max(hasWidgets ? 60 : 76, leftModules.implicitWidth + Style.space(12))
+      }
       contentHeight: root.islandHeight
 
       Behavior on contentWidth {
-        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+      }
+      Behavior on opacity {
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
       }
 
       Item {
@@ -1494,7 +1504,7 @@ Item {
       }
     }
 
-    // ------------------------------------------------------------- 2. Right Island Notch (Always on screen)
+    // ------------------------------------------------------------- 2. Right Island Notch (Auto-collapses when empty)
     NotchSurface {
       id: rightNotch
       z: 10
@@ -1502,14 +1512,24 @@ Item {
       anchors.rightMargin: 8
       anchors.top: parent.top
       radius: 8
+      visible: contentWidth > 0
+      opacity: contentWidth > 0 ? 1.0 : 0.0
       color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
       borderColor: Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.18)
       borderWidth: 1
-      contentWidth: Math.max(60, rightModules.implicitWidth + Style.space(12))
+      contentWidth: {
+        var hasWidgets = rightModules.entries && rightModules.entries.length > 0
+        var isDragging = root.barDragSource !== null
+        if (!hasWidgets && !isDragging) return 0
+        return Math.max(hasWidgets ? 60 : 76, rightModules.implicitWidth + Style.space(12))
+      }
       contentHeight: root.islandHeight
 
       Behavior on contentWidth {
-        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+      }
+      Behavior on opacity {
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
       }
 
       Item {
@@ -1782,14 +1802,107 @@ Item {
     return idx === -1 ? null : entries[idx]
   }
 
-  component LeftModules: ModuleList {
-    entries: root.layoutEntries("left")
-    region: "left"
+  component EmptyZoneDropSlot: Item {
+    id: emptySlot
+
+    property string region: ""
+    property string zoneLabel: ""
+    readonly property string moduleName: ""
+    readonly property var moduleSettings: ({})
+    readonly property var activeItem: emptySlot
+    readonly property bool isHoveredDrop: root.barDragTarget === emptySlot
+
+    implicitWidth: 60
+    implicitHeight: Math.max(22, root.islandHeight - 8)
+    width: implicitWidth
+    height: implicitHeight
+
+    Component.onCompleted: root.registerModuleSlot(emptySlot)
+    Component.onDestruction: root.unregisterModuleSlot(emptySlot)
+
+    Rectangle {
+      anchors.fill: parent
+      anchors.margins: 2
+      radius: Math.min(Style.cornerRadius, height / 2)
+      color: emptySlot.isHoveredDrop ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25) : Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.08)
+      border.color: emptySlot.isHoveredDrop ? Color.accent : Qt.rgba(root.themeForeground.r, root.themeForeground.g, root.themeForeground.b, 0.35)
+      border.width: 1
+
+      Row {
+        anchors.centerIn: parent
+        spacing: 4
+
+        Text {
+          text: "+"
+          color: emptySlot.isHoveredDrop ? Color.accent : root.barForeground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.weight: Font.Bold
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Text {
+          text: emptySlot.zoneLabel
+          color: emptySlot.isHoveredDrop ? Color.accent : root.barForeground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          anchors.verticalCenter: parent.verticalCenter
+          opacity: 0.85
+        }
+      }
+    }
   }
 
-  component RightModules: ModuleList {
-    entries: root.layoutEntries("right")
-    region: "right"
+  component LeftModules: Item {
+    id: leftModulesRoot
+    property var entries: root.layoutEntries("left")
+    readonly property bool isEmpty: !entries || entries.length === 0
+    readonly property bool isDragActive: root.barDragSource !== null
+
+    implicitWidth: isEmpty ? (isDragActive ? emptyDropSlot.implicitWidth : 0) : moduleList.implicitWidth
+    implicitHeight: isEmpty ? (isDragActive ? emptyDropSlot.implicitHeight : 0) : moduleList.implicitHeight
+    width: implicitWidth
+    height: implicitHeight
+
+    ModuleList {
+      id: moduleList
+      visible: !leftModulesRoot.isEmpty
+      entries: leftModulesRoot.entries
+      region: "left"
+    }
+
+    EmptyZoneDropSlot {
+      id: emptyDropSlot
+      visible: leftModulesRoot.isEmpty && leftModulesRoot.isDragActive
+      region: "left"
+      zoneLabel: "Left"
+    }
+  }
+
+  component RightModules: Item {
+    id: rightModulesRoot
+    property var entries: root.layoutEntries("right")
+    readonly property bool isEmpty: !entries || entries.length === 0
+    readonly property bool isDragActive: root.barDragSource !== null
+
+    implicitWidth: isEmpty ? (isDragActive ? emptyDropSlot.implicitWidth : 0) : moduleList.implicitWidth
+    implicitHeight: isEmpty ? (isDragActive ? emptyDropSlot.implicitHeight : 0) : moduleList.implicitHeight
+    width: implicitWidth
+    height: implicitHeight
+
+    ModuleList {
+      id: moduleList
+      visible: !rightModulesRoot.isEmpty
+      entries: rightModulesRoot.entries
+      region: "right"
+    }
+
+    EmptyZoneDropSlot {
+      id: emptyDropSlot
+      visible: rightModulesRoot.isEmpty && rightModulesRoot.isDragActive
+      region: "right"
+      zoneLabel: "Right"
+    }
   }
 
   component CenterModules: Item {
@@ -1813,8 +1926,14 @@ Item {
       anchors.centerIn: parent
       spacing: 0
 
+      EmptyZoneDropSlot {
+        visible: centerRoot.entries.length === 0 && root.barDragSource !== null
+        region: "center"
+        zoneLabel: "Center"
+      }
+
       ModuleList {
-        visible: !centerRoot.hasAnchor
+        visible: !centerRoot.hasAnchor && centerRoot.entries.length > 0
         entries: centerRoot.entries
         region: "center"
       }
