@@ -19,6 +19,7 @@ Item {
 
   readonly property bool isSearchOpen: root ? root.isSearchOpen : false
   readonly property bool isHistoryOpen: root ? root.isHistoryOpen : false
+  readonly property bool isFullscreen: root ? root.isFullscreenActive : false
   readonly property color islandForeground: (root && root.barForeground) ? root.barForeground : Color.bar.text
   readonly property color islandThemeForeground: (root && root.themeForeground) ? root.themeForeground : Color.foreground
 
@@ -322,6 +323,8 @@ Item {
   property string dmenuMode: ""
   property string dmenuPrompt: ""
   property var dmenuOptions: []
+  property real dmenuWidth: 600
+  property real dmenuMaxHeight: 520
   property string selectionFile: ""
   property string doneFile: ""
   property bool requestActive: false
@@ -876,6 +879,8 @@ Item {
     centerIsland.dmenuMode = payload.mode === "input" ? "input" : "select"
     centerIsland.dmenuPrompt = String(payload.prompt || (centerIsland.dmenuMode === "input" ? "Input" : "Select"))
     centerIsland.dmenuOptions = Array.isArray(payload.options) ? payload.options : []
+    centerIsland.dmenuWidth = Math.max(1, Number(payload.width || 600))
+    centerIsland.dmenuMaxHeight = Math.max(0, Number(payload.maxHeight || 520))
     centerIsland.selectionFile = String(payload.selectionFile || "")
     centerIsland.doneFile = String(payload.doneFile || "")
     centerIsland.requestActive = !!centerIsland.doneFile
@@ -972,7 +977,10 @@ Item {
   readonly property real targetContentWidth: {
     switch (currentMode) {
       case "menu":
-        if (centerIsland.dmenuMode !== "" || centerIsland.filterText.length > 0 || centerIsland.activeMenu === "style.font" || centerIsland.activeMenu === "trigger.capture.screenrecord" || centerIsland.activeMenu === "apps") {
+        if (centerIsland.dmenuMode !== "") {
+          return centerIsland.dmenuWidth > 0 ? centerIsland.dmenuWidth : 600
+        }
+        if (centerIsland.filterText.length > 0 || centerIsland.activeMenu === "style.font" || centerIsland.activeMenu === "trigger.capture.screenrecord" || centerIsland.activeMenu === "apps") {
           return 500
         }
         return 340
@@ -991,6 +999,10 @@ Item {
     switch (currentMode) {
       case "menu":
         if (centerIsland.dmenuMode === "input") return 76
+        if (centerIsland.dmenuMode !== "") {
+          var maxH = centerIsland.dmenuMaxHeight > 0 ? centerIsland.dmenuMaxHeight : 520
+          return Math.min(maxH, Math.max(150, 56 + menuDisplayModel.count * 44))
+        }
         if (menuDisplayModel.count === 0) return 130
         var isScrollableList = centerIsland.activeMenu === "apps" || centerIsland.activeMenu === "style.font" || centerIsland.filterText.length > 0
         if (isScrollableList) {

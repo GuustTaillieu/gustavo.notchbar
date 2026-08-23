@@ -800,9 +800,25 @@ Item {
     ignoreUnknownSignals: true
     function onOpenedChanged() {
       if (root.defaultMenuItem && root.defaultMenuItem.opened) {
-        var requestedRoute = root.defaultMenuItem.pendingInitialMenu || root.defaultMenuItem.activeMenu || "root"
-        root.defaultMenuItem.opened = false
-        root.toggleMenu(requestedRoute)
+        var item = root.defaultMenuItem
+        item.opened = false
+        if (item.mode === "select" || item.mode === "input") {
+          var payload = {
+            mode: item.mode,
+            prompt: item.dmenuPrompt,
+            options: item.dmenuOptions,
+            selectionFile: item.selectionFile,
+            doneFile: item.doneFile,
+            width: item.dmenuWidth,
+            maxHeight: item.dmenuMaxHeight
+          }
+          if (root.centerIslandRef) {
+            root.centerIslandRef.openDmenu(payload)
+          }
+        } else {
+          var requestedRoute = item.pendingInitialMenu || item.activeMenu || "root"
+          root.toggleMenu(requestedRoute)
+        }
       }
     }
   }
@@ -1582,13 +1598,14 @@ Item {
     readonly property bool isMenuOpen: barPluginRoot ? barPluginRoot.isMenuOpen : false
     readonly property bool isHistoryOpen: barPluginRoot ? barPluginRoot.isHistoryOpen : false
     readonly property bool isExpanded: isSearchOpen || isMenuOpen || isHistoryOpen
+    readonly property bool isIdle: centerIslandItem ? (centerIslandItem.currentMode === "clock") : true
 
     visible: true
     exclusionMode: ExclusionMode.Ignore
     color: "transparent"
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "omarchy-bar-center"
-    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.layer: isIdle ? WlrLayer.Top : WlrLayer.Overlay
     WlrLayershell.keyboardFocus: centerWindow.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     anchors {
