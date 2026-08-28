@@ -160,6 +160,7 @@ gustavo.notchbar/
 ├── omarchy-notchbar-style  # CLI script for switching island styles
 ├── manifest.json           # Omarchy plugin manifest
 ├── widgets/                # First-party widget delegates (Tray, etc.)
+├── LICENSE                 # License file
 └── README.md               # Documentation
 ```
 
