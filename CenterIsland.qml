@@ -1105,11 +1105,16 @@ Item {
     radius: 8
     clip: true
     attachSide: (root && root.centerIslandAttach) ? root.centerIslandAttach : "none"
-    color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
+    color: centerIsland.currentMode === "menu" ? Color.bar.background : Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.50)
+    shadowEnabled: centerIsland.currentMode !== "menu"
     borderColor: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
     borderWidth: 1
     contentWidth: centerIsland.targetContentWidth
     contentHeight: centerIsland.targetContentHeight
+
+    Behavior on color {
+      ColorAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
 
     Behavior on contentWidth {
       NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
@@ -2039,31 +2044,6 @@ Item {
               }
             }
 
-            // Top Fade Scrim
-            Rectangle {
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.top: parent.top
-              height: 14
-              visible: menuListView.contentY > 0
-              gradient: Gradient {
-                GradientStop { position: 0.0; color: notchSurface.color }
-                GradientStop { position: 1.0; color: "transparent" }
-              }
-            }
-
-            // Bottom Fade Scrim
-            Rectangle {
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.bottom: parent.bottom
-              height: 14
-              visible: (menuListView.contentY + menuListView.height) < menuListView.contentHeight
-              gradient: Gradient {
-                GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 1.0; color: notchSurface.color }
-              }
-            }
 
             // Empty Placeholder
             ColumnLayout {
