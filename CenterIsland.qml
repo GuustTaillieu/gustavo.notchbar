@@ -737,6 +737,9 @@ Item {
 
   function setFilter(text) {
     centerIsland.filterText = text
+    if (menuSearchInput && menuSearchInput.text !== text) {
+      menuSearchInput.text = text
+    }
     centerIsland.selectedIndex = 0
     centerIsland.cursorActive = true
     if (!centerIsland.dmenuMode && centerIsland.filterText.trim()) centerIsland.loadProvidersForSearch()
@@ -750,6 +753,7 @@ Item {
     }
     centerIsland.activeMenu = id
     centerIsland.filterText = ""
+    if (menuSearchInput) menuSearchInput.text = ""
     centerIsland.selectedIndex = 0
     centerIsland.cursorActive = true
     centerIsland.rebuildDisplay()
@@ -853,6 +857,7 @@ Item {
     centerIsland.activeMenu = centerIsland.items[id] ? id : "root"
     centerIsland.navStack = []
     centerIsland.filterText = ""
+    if (menuSearchInput) menuSearchInput.text = ""
     centerIsland.selectedIndex = 0
     centerIsland.cursorActive = true
     centerIsland.menuOpenInternal = true
@@ -887,6 +892,7 @@ Item {
     centerIsland.activeMenu = "root"
     centerIsland.navStack = []
     centerIsland.filterText = ""
+    if (menuSearchInput) menuSearchInput.text = ""
     centerIsland.selectedIndex = 0
     centerIsland.cursorActive = centerIsland.dmenuMode !== "input"
     centerIsland.menuOpenInternal = true
@@ -922,6 +928,7 @@ Item {
     centerIsland.menuOpenInternal = false
     centerIsland.dmenuMode = ""
     centerIsland.filterText = ""
+    if (menuSearchInput) menuSearchInput.text = ""
     centerIsland.deleteConfirmOpen = false
     centerIsland.deleteTarget = null
     if (root) {
@@ -1709,6 +1716,15 @@ Item {
           NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
         }
 
+        onVisibleChanged: {
+          if (visible) {
+            if (menuSearchInput) {
+              menuSearchInput.text = centerIsland.filterText
+              Qt.callLater(function() { menuSearchInput.forceActiveFocus() })
+            }
+          }
+        }
+
         ColumnLayout {
           anchors.fill: parent
           spacing: Style.space(8)
@@ -1805,19 +1821,9 @@ Item {
                     centerIsland.requestDeleteSelected()
                     event.accepted = true
                   } else if (event.key === Qt.Key_Escape) {
-                    if (centerIsland.filterText) {
-                      centerIsland.setFilter("")
-                      menuSearchInput.text = ""
-                    } else if (centerIsland.activeMenu !== "root") {
-                      centerIsland.goBack()
-                    } else {
-                      centerIsland.closeMenu()
-                    }
+                    centerIsland.closeMenu()
                     event.accepted = true
                   } else if ((event.key === Qt.Key_H && (event.modifiers & Qt.ControlModifier)) || (event.key === Qt.Key_Left && !centerIsland.filterText)) {
-                    centerIsland.goBack()
-                    event.accepted = true
-                  } else if (event.key === Qt.Key_Backspace && !centerIsland.filterText) {
                     centerIsland.goBack()
                     event.accepted = true
                   } else if (event.key === Qt.Key_Up || (event.key === Qt.Key_K && (event.modifiers & Qt.ControlModifier))) {
@@ -2041,7 +2047,7 @@ Item {
               height: 14
               visible: menuListView.contentY > 0
               gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.9) }
+                GradientStop { position: 0.0; color: notchSurface.color }
                 GradientStop { position: 1.0; color: "transparent" }
               }
             }
@@ -2055,7 +2061,7 @@ Item {
               visible: (menuListView.contentY + menuListView.height) < menuListView.contentHeight
               gradient: Gradient {
                 GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 1.0; color: Qt.rgba(Color.bar.background.r, Color.bar.background.g, Color.bar.background.b, 0.9) }
+                GradientStop { position: 1.0; color: notchSurface.color }
               }
             }
 
