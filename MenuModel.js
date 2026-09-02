@@ -1,45 +1,51 @@
 function stripJsonc(raw) {
-  return String(raw || "")
+  var str = String(raw || "").slice(0, 524288)
+  return str
     .replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
     .replace(/,(\s*[}\]])/g, "$1")
 }
 
 function normalizeAliases(value) {
-  if (Array.isArray(value)) return value.filter(function(v) { return v })
-  if (typeof value === "string" && value) return [value]
+  if (Array.isArray(value)) return value.filter(function(v) { return v && typeof v === "string" }).map(function(v) { return v.slice(0, 100) }).slice(0, 20)
+  if (typeof value === "string" && value) return [value.slice(0, 100)]
   return []
 }
 
 function normalizeItem(id, raw) {
+  var safeId = String(id || "").slice(0, 100)
   var value = raw || {}
   var aliases = normalizeAliases(value.aliases)
-  var parent = value.parent
+  var parent = value.parent !== undefined ? String(value.parent).slice(0, 100) : undefined
   if (parent === undefined)
-    parent = id.indexOf(".") >= 0 ? id.split(".").slice(0, -1).join(".") : "root"
-  if (id === "root") parent = ""
+    parent = safeId.indexOf(".") >= 0 ? safeId.split(".").slice(0, -1).join(".") : "root"
+  if (safeId === "root") parent = ""
 
-  var kind = value.action ? "action" : (value.target ? "link" : "menu")
+  var action = value.action ? String(value.action).slice(0, 500) : ""
+  var target = value.target ? String(value.target).slice(0, 200) : ""
+  var kind = action ? "action" : (target ? "link" : "menu")
 
   return {
-    id: id,
+    id: safeId,
     parent: parent,
     kind: kind,
-    icon: value.icon || "",
-    iconFont: value.iconFont || "",
-    label: value.label || id,
-    title: value.title || "",
-    target: value.target || "",
-    description: value.description || "",
-    action: value.action || "",
-    provider: value.provider || "",
+    icon: String(value.icon || "").slice(0, 100),
+    iconFont: String(value.iconFont || "").slice(0, 100),
+    label: String(value.label || safeId).slice(0, 200),
+    title: String(value.title || "").slice(0, 200),
+    target: target,
+    description: String(value.description || "").slice(0, 500),
+    action: action,
+    provider: String(value.provider || "").slice(0, 100),
     aliases: aliases,
-    when: value.when || "",
-    checked: value.checked || ""
+    when: String(value.when || "").slice(0, 500),
+    checked: String(value.checked || "").slice(0, 500)
   }
 }
 
 function parseMenuJsonc(raw) {
-  var stripped = stripJsonc(raw)
+  var str = String(raw || "")
+  if (!str.trim() || str.length > 524288) return []
+  var stripped = stripJsonc(str)
   if (!stripped.trim()) return []
 
   var parsed
@@ -54,10 +60,13 @@ function parseMenuJsonc(raw) {
     ? parsed.items
     : parsed
   var out = []
+  var count = 0
   for (var id in source) {
+    if (count >= 500) break
     var entry = source[id]
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
     out.push(normalizeItem(id, entry))
+    count++
   }
   return out
 }

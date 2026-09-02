@@ -106,6 +106,7 @@ PanelWindow {
               Text {
                 anchors.fill: parent
                 text: "Search applications & commands..."
+                textFormat: Text.PlainText
                 font.family: searchInput.font.family
                 font.pixelSize: searchInput.font.pixelSize
                 color: searchOverlay.searchForeground
@@ -200,6 +201,7 @@ PanelWindow {
                 Text {
                   Layout.fillWidth: true
                   text: (root && root.shell && root.shell.appLibrary && entry) ? root.shell.appLibrary.entryName(entry) : ((entry && (entry.name || entry.label || entry.id)) || "")
+                  textFormat: Text.PlainText
                   font.family: Style.font.family
                   font.pixelSize: Style.font.body
                   font.weight: Font.DemiBold
@@ -210,6 +212,7 @@ PanelWindow {
                 Text {
                   Layout.fillWidth: true
                   text: (root && root.shell && root.shell.appLibrary && entry) ? root.shell.appLibrary.entrySubtext(entry) : ((entry && (entry.subtext || entry.description || entry.comment)) || "")
+                  textFormat: Text.PlainText
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                   color: searchOverlay.searchForeground

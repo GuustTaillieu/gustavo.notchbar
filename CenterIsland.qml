@@ -409,7 +409,7 @@ Item {
       return
     }
     guardProc.collected = ""
-    guardProc.command = ["bash", "-lc", script]
+    guardProc.command = ["timeout", "3s", "bash", "-lc", script]
     guardProc.running = true
   }
 
@@ -417,7 +417,11 @@ Item {
     id: guardProc
     property string collected: ""
     stdout: SplitParser {
-      onRead: function(data) { guardProc.collected += data + "\n" }
+      onRead: function(data) {
+        if (guardProc.collected.length < 65536) {
+          guardProc.collected += String(data).slice(0, 1024) + "\n"
+        }
+      }
     }
     onExited: function(exitCode, exitStatus) {
       if (exitCode !== 0 || exitStatus !== 0) {
@@ -505,7 +509,7 @@ Item {
     providerProc.providerKey = entry.provider
     providerProc.revision = centerIsland.providerRevision
     providerProc.collected = ""
-    providerProc.command = ["bash", "-lc", spec.script]
+    providerProc.command = ["timeout", "3s", "bash", "-lc", spec.script]
     providerProc.running = true
   }
 
@@ -516,12 +520,13 @@ Item {
     var providerRows = []
     var takenIds = ({})
     for (var i = 0; i < lines.length; i++) {
+      if (providerRows.length >= 200) break
       var line = lines[i].trim()
       if (!line) continue
       var parts = line.split("\t")
-      var label = parts[0] || ""
-      var value = parts[1] || parts[0] || ""
-      var current = parts[2] || ""
+      var label = String(parts[0] || "").slice(0, 200)
+      var value = String(parts[1] || parts[0] || "").slice(0, 200)
+      var current = String(parts[2] || "").slice(0, 200)
       if (!label) continue
       var rowId = menuId + "." + MenuModel.slugify(value)
       while (takenIds[rowId]) rowId += "-"
@@ -598,7 +603,11 @@ Item {
     property string collected: ""
     property int revision: 0
     stdout: SplitParser {
-      onRead: function(data) { providerProc.collected += data + "\n" }
+      onRead: function(data) {
+        if (providerProc.collected.length < 65536) {
+          providerProc.collected += String(data).slice(0, 1024) + "\n"
+        }
+      }
     }
     onExited: {
       if (providerProc.revision === centerIsland.providerRevision) {
@@ -1041,14 +1050,17 @@ Item {
 
   Process {
     id: historyLoaderProc
-    command: ["bash", "-c", "python3 -c \"import os, glob, json; hdir=os.path.expanduser('~/.local/state/omarchy/notifications'); files=glob.glob(hdir+'/*.json') + glob.glob(hdir+'/history/*.json'); res=[]; seen=set();\nfor f in files:\n try:\n  d=json.load(open(f)); key=str(d.get('id',''))+'-'+str(d.get('timestamp',''))+'-'+str(d.get('summary',''));\n  if key not in seen:\n   seen.add(key); d['filePath']=f; res.append(d)\n except: pass\nres.sort(key=lambda x: x.get('timestamp', 0), reverse=True); print(json.dumps(res))\""]
+    command: ["timeout", "3s", "python3", "-c", "import os, stat, json\nhdir = os.path.expanduser('~/.local/state/omarchy/notifications')\nMAX_FILES = 120\nMAX_BYTES = 65536\nMAX_TOTAL = 100\nMAX_OUT = 262144\n\ndef scan(d):\n    if not os.path.isdir(d): return []\n    out = []\n    try:\n        names = sorted(os.listdir(d), reverse=True)\n    except: return []\n    for name in names:\n        if not name.endswith('.json') or len(out) >= MAX_FILES: break\n        p = os.path.join(d, name)\n        fd = None\n        try:\n            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)\n            fd = os.open(p, flags)\n            st = os.fstat(fd)\n            if not stat.S_ISREG(st.st_mode) or st.st_size <= 0 or st.st_size > MAX_BYTES:\n                continue\n            with os.fdopen(fd, 'r', encoding='utf-8', errors='replace') as fp:\n                fd = None\n                raw = fp.read(MAX_BYTES)\n                data = json.loads(raw)\n                if isinstance(data, dict):\n                    data['_p'] = p\n                    data['_mt'] = int(st.st_mtime * 1000)\n                    out.append(data)\n        except: pass\n        finally:\n            if fd is not None:\n                try: os.close(fd)\n                except: pass\n    return out\n\nentries = scan(hdir) + scan(os.path.join(hdir, 'history'))\nseen = set()\nres = []\nfor d in entries:\n    raw_app = str(d.get('appName') or d.get('app') or '')[:100]\n    raw_sum = str(d.get('summary') or '')[:300]\n    raw_body = str(d.get('body') or '')[:1000]\n    raw_icon = str(d.get('appIcon') or '')[:300]\n    raw_img = str(d.get('image') or '')[:300]\n    raw_glyph = str(d.get('glyph') or '')[:20]\n    fpath = d.get('_p', '')\n    try: ts = int(d.get('timestamp') or d.get('_mt') or 0)\n    except: ts = 0\n    k = str(d.get('id', '')) + '-' + str(ts) + '-' + raw_sum\n    if k not in seen:\n        seen.add(k)\n        res.append({'id': d.get('id', 0), 'timestamp': ts, 'app': raw_app, 'appName': raw_app, 'appIcon': raw_icon, 'summary': raw_sum, 'body': raw_body, 'image': raw_img, 'glyph': raw_glyph, 'filePath': fpath})\n    if len(res) >= MAX_TOTAL: break\n\nres.sort(key=lambda x: x.get('timestamp', 0), reverse=True)\npayload = json.dumps(res[:MAX_TOTAL])\nif len(payload) <= MAX_OUT: print(payload)\nelse: print('[]')\n"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         try {
+          if (!text || text.length > 262144) return
           var list = JSON.parse(text)
+          if (!Array.isArray(list)) return
           historyModel.clear()
-          for (var i = 0; i < list.length; i++) {
+          var limit = Math.min(list.length, 100)
+          for (var i = 0; i < limit; i++) {
             historyModel.append(list[i])
           }
         } catch (e) {
@@ -1290,6 +1302,7 @@ Item {
             Text {
               Layout.fillWidth: true
               text: centerIsland.activePlayer ? (centerIsland.activePlayer.trackTitle || "Playing Audio") : "Music"
+              textFormat: Text.PlainText
               font.family: Style.font.family
               font.pixelSize: Style.font.body
               font.weight: Font.DemiBold
@@ -1300,6 +1313,7 @@ Item {
             Text {
               Layout.fillWidth: true
               text: centerIsland.activePlayer ? (centerIsland.activePlayer.trackArtist || "") : ""
+              textFormat: Text.PlainText
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               color: centerIsland.islandForeground
@@ -1583,6 +1597,7 @@ Item {
           Text {
             Layout.fillWidth: true
             text: centerIsland.mediaOsdMessage || (centerIsland.hasActiveMedia ? ((centerIsland.activePlayer.trackTitle || "") + (centerIsland.activePlayer.trackArtist ? " • " + centerIsland.activePlayer.trackArtist : "")) : "")
+            textFormat: Text.PlainText
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
             font.weight: Font.DemiBold
@@ -1660,6 +1675,7 @@ Item {
             Text {
               Layout.fillWidth: true
               text: centerIsland.currentNotification ? (centerIsland.currentNotification.appName || "") : ""
+              textFormat: Text.PlainText
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.weight: Font.DemiBold
@@ -1672,6 +1688,7 @@ Item {
             Text {
               Layout.fillWidth: true
               text: centerIsland.currentNotification ? (centerIsland.currentNotification.summary || "") : ""
+              textFormat: Text.PlainText
               font.family: Style.font.family
               font.pixelSize: Style.font.body
               font.weight: Font.Bold
@@ -1683,6 +1700,7 @@ Item {
             Text {
               Layout.fillWidth: true
               text: centerIsland.currentNotification ? (centerIsland.currentNotification.body || "") : ""
+              textFormat: Text.PlainText
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
               color: centerIsland.islandForeground
@@ -1808,6 +1826,7 @@ Item {
                     : (centerIsland.activeMenu !== "root"
                         ? ("Search in " + (MenuModel.item(centerIsland.items, centerIsland.activeMenu) ? (MenuModel.item(centerIsland.items, centerIsland.activeMenu).label) : centerIsland.activeMenu) + "…")
                         : "Search applications, toggles, settings & commands...")
+                  textFormat: Text.PlainText
                   font.family: menuSearchInput.font.family
                   font.pixelSize: menuSearchInput.font.pixelSize
                   color: centerIsland.islandForeground
@@ -1866,6 +1885,7 @@ Item {
                   id: breadcrumbText
                   anchors.centerIn: parent
                   text: MenuModel.pathFor(centerIsland.items, centerIsland.activeMenu)
+                  textFormat: Text.PlainText
                   font.family: Style.font.family
                   font.pixelSize: 10
                   font.weight: Font.Bold
@@ -1995,6 +2015,7 @@ Item {
                     Text {
                       Layout.fillWidth: true
                       text: model.label || ""
+                      textFormat: Text.PlainText
                       font.family: Style.font.family
                       font.pixelSize: Style.font.body
                       font.weight: menuItemRow.isSelected ? Font.Bold : Font.Medium
@@ -2005,6 +2026,7 @@ Item {
                     Text {
                       Layout.fillWidth: true
                       text: model.detail || ""
+                      textFormat: Text.PlainText
                       font.family: Style.font.family
                       font.pixelSize: Style.font.caption
                       color: centerIsland.islandForeground
@@ -2063,6 +2085,7 @@ Item {
               Text {
                 Layout.alignment: Qt.AlignHCenter
                 text: centerIsland.filterText ? ("No matches for \"" + centerIsland.filterText + "\"") : "Empty Menu"
+                textFormat: Text.PlainText
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 color: centerIsland.islandForeground
@@ -2143,6 +2166,7 @@ Item {
                 id: countLabel
                 anchors.centerIn: parent
                 text: String(historyModel.count)
+                textFormat: Text.PlainText
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 font.weight: Font.DemiBold
@@ -2189,7 +2213,7 @@ Item {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                  Util.execDetached("rm -f " + (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications/*.json " + (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications/history/*.json")
+                  Quickshell.execDetached(["python3", "-c", "import os, glob; [os.unlink(p) for d in ['~/.local/state/omarchy/notifications', '~/.local/state/omarchy/notifications/history'] for p in glob.glob(os.path.expanduser(d)+'/*.json') if os.path.isfile(p) and not os.path.islink(p)]"])
                   historyModel.clear()
                 }
               }
@@ -2362,6 +2386,7 @@ Item {
                         Text {
                           Layout.fillWidth: true
                           text: model.app || model.appName || ""
+                          textFormat: Text.PlainText
                           font.family: Style.font.family
                           font.pixelSize: Style.font.caption
                           font.weight: Font.DemiBold
@@ -2373,6 +2398,7 @@ Item {
 
                         Text {
                           text: centerIsland.formatRelativeTime(model.timestamp)
+                          textFormat: Text.PlainText
                           font.family: Style.font.family
                           font.pixelSize: Style.font.caption
                           color: centerIsland.islandForeground
@@ -2384,6 +2410,7 @@ Item {
                       Text {
                         Layout.fillWidth: true
                         text: model.summary || ""
+                        textFormat: Text.PlainText
                         font.family: Style.font.family
                         font.pixelSize: Style.font.bodySmall
                         font.weight: Font.Bold
@@ -2395,6 +2422,7 @@ Item {
                       Text {
                         Layout.fillWidth: true
                         text: model.body || ""
+                        textFormat: Text.PlainText
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption
                         color: centerIsland.islandForeground
@@ -2439,12 +2467,10 @@ Item {
                       if (mouse.button === Qt.RightButton) {
                         deleteNotification(index, model.filePath)
                       } else {
-                        // Left click -> Execute or Focus
-                        if (model.exec) {
-                          Util.execDetached(model.exec)
-                        } else if (model.app && model.app !== "notify-send" && model.app !== "omarchy-action") {
+                        var app = String(model.app || model.appName || "").trim()
+                        if (app && app !== "notify-send" && app !== "omarchy-action" && /^[\w\-.]+$/.test(app)) {
                           var omPath = (root && root.omarchyPath) ? root.omarchyPath : "/usr/share/omarchy"
-                          Util.execDetached(omPath + "/bin/omarchy-hyprland-focus-app " + model.app)
+                          Quickshell.execDetached([omPath + "/bin/omarchy-hyprland-focus-app", app])
                         }
                         deleteNotification(index, model.filePath)
                         if (root) root.closeHistory()
@@ -2454,8 +2480,11 @@ Item {
                 }
 
                 function deleteNotification(idx, filePath) {
-                  if (filePath) {
-                    Util.execDetached("rm -f " + filePath)
+                  if (filePath && typeof filePath === "string") {
+                    var hdir = (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications"
+                    if ((filePath.indexOf(hdir + "/") === 0) && filePath.indexOf("..") === -1 && filePath.slice(-5) === ".json") {
+                      Quickshell.execDetached(["rm", "-f", "--", filePath])
+                    }
                   }
                   historyModel.remove(idx)
                 }

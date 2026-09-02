@@ -1075,14 +1075,13 @@ Item {
     root.currentNotification = {
       id: data.id || 0,
       originalId: data.originalId || 0,
-      app: data.app || data.appName || "",
-      appName: data.app || data.appName || "",
-      appIcon: data.appIcon || "",
-      summary: data.summary || "",
-      body: data.body || "",
-      image: data.image || "",
-      glyph: data.glyph || "",
-      exec: data.exec || "",
+      app: String(data.app || data.appName || "").slice(0, 100),
+      appName: String(data.app || data.appName || "").slice(0, 100),
+      appIcon: String(data.appIcon || "").slice(0, 300),
+      summary: String(data.summary || "").slice(0, 300),
+      body: String(data.body || "").slice(0, 1000),
+      image: String(data.image || "").slice(0, 300),
+      glyph: String(data.glyph || "").slice(0, 20),
       expireTimeout: data.expireTimeout || 0
     }
 
@@ -1096,27 +1095,32 @@ Item {
   function resolveNotificationIcon(notif) {
     if (!notif) return ""
     function formatUrl(pathOrUrl) {
-      var s = String(pathOrUrl || "")
+      var s = String(pathOrUrl || "").trim()
       if (!s) return ""
-      if (s.indexOf("file://") === 0 || s.indexOf("image://") === 0) return s
+      if (s.indexOf("file:///") === 0 || s.indexOf("image://") === 0) return s
       if (s.charAt(0) === "/") return Util.fileUrl(s)
-      return s
+      return ""
     }
 
     var img = String(notif.image || "")
-    if (img.length > 0) return formatUrl(img)
+    if (img.length > 0) {
+      var formattedImg = formatUrl(img)
+      if (formattedImg) return formattedImg
+    }
 
     var appIcon = String(notif.appIcon || "")
     if (appIcon.length > 0) {
-      if (appIcon.indexOf("file://") === 0 || appIcon.indexOf("image://") === 0 || appIcon.charAt(0) === "/") {
-        return formatUrl(appIcon)
+      if (appIcon.indexOf("file:///") === 0 || appIcon.indexOf("image://") === 0 || appIcon.charAt(0) === "/") {
+        var formattedAppIcon = formatUrl(appIcon)
+        if (formattedAppIcon) return formattedAppIcon
+      } else if (/^[\w\-.]+$/.test(appIcon)) {
+        var themed = Quickshell.iconPath(appIcon, true)
+        if (themed && themed.length > 0) return formatUrl(themed)
       }
-      var themed = Quickshell.iconPath(appIcon, true)
-      if (themed && themed.length > 0) return formatUrl(themed)
     }
 
     var appName = String(notif.appName || notif.app || "")
-    if (appName.length > 0 && appName !== "notify-send" && appName !== "omarchy-action") {
+    if (appName.length > 0 && appName !== "notify-send" && appName !== "omarchy-action" && /^[\w\-.]+$/.test(appName)) {
       var appThemed = Quickshell.iconPath(appName.toLowerCase(), true)
       if (appThemed && appThemed.length > 0) return formatUrl(appThemed)
       if (root.shell && root.shell.appLibrary) {
@@ -1126,7 +1130,7 @@ Item {
     }
 
     var summaryName = String(notif.summary || "")
-    if (summaryName.length > 0) {
+    if (summaryName.length > 0 && /^[\w\-.]+$/.test(summaryName)) {
       var summaryThemed = Quickshell.iconPath(summaryName.toLowerCase(), true)
       if (summaryThemed && summaryThemed.length > 0) return formatUrl(summaryThemed)
     }
@@ -1135,9 +1139,9 @@ Item {
 
   function resolveNotificationGlyph(notif) {
     if (!notif) return ""
-    if (notif.glyph) return String(notif.glyph)
+    if (notif.glyph) return String(notif.glyph).slice(0, 20)
     try {
-      if (notif.hints && notif.hints["omarchy-glyph"]) return String(notif.hints["omarchy-glyph"])
+      if (notif.hints && notif.hints["omarchy-glyph"]) return String(notif.hints["omarchy-glyph"]).slice(0, 20)
     } catch (e) {}
     return ""
   }
@@ -1153,13 +1157,6 @@ Item {
   function invokeNotificationAction() {
     var notif = root.currentNotification
     if (!notif) return
-
-    var execCmd = String(notif.exec || "")
-    if (execCmd) {
-      Util.execDetached(execCmd)
-      dismissNotification()
-      return
-    }
 
     var invoked = false
     try {
@@ -1183,10 +1180,10 @@ Item {
     }
 
     if (!invoked) {
-      var app = String(notif.appName || notif.app || "")
-      if (app && app !== "notify-send" && app !== "omarchy-action") {
+      var app = String(notif.appName || notif.app || "").trim()
+      if (app && app !== "notify-send" && app !== "omarchy-action" && /^[\w\-.]+$/.test(app)) {
         var path = root.omarchyPath || "/usr/share/omarchy"
-        Util.execDetached(path + "/bin/omarchy-hyprland-focus-app " + app)
+        Quickshell.execDetached([path + "/bin/omarchy-hyprland-focus-app", app])
       }
     }
 
@@ -1911,6 +1908,7 @@ Item {
           id: tooltipLabel
           anchors.centerIn: parent
           text: root.tooltipText
+          textFormat: Text.PlainText
           color: Color.tooltip.text
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -2738,10 +2736,11 @@ Item {
     }
 
     function update(raw) {
-      var data = Util.parseModuleJson(raw)
+      var bounded = String(raw || "").slice(0, 16384)
+      var data = Util.parseModuleJson(bounded)
       var klass = data.class || data.alt || ""
 
-      outputText = data.text || String(raw || "").trim()
+      outputText = data.text || bounded.trim()
       outputTooltip = data.tooltip || String(setting("tooltip", ""))
       outputActive = klass === "active" || (Array.isArray(klass) && klass.indexOf("active") !== -1)
     }
@@ -2769,7 +2768,7 @@ Item {
 
     Process {
       id: customProc
-      command: ["bash", "-lc", String(customRoot.setting("exec", ""))]
+      command: ["timeout", "5s", "bash", "-lc", String(customRoot.setting("exec", ""))]
       stdout: StdioCollector {
         waitForEnd: true
         onStreamFinished: customRoot.update(text)
