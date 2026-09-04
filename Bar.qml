@@ -247,21 +247,69 @@ Item {
     return false
   }
 
+  // Presence of the `bar-off` flag = bar hidden. Watching the parent toggles
+  // directory because FileView can't observe a file that doesn't exist yet,
+  // and the flag is created/removed by `omarchy-toggle-bar`.
+  Process {
+    id: barHiddenProbe
+    running: true
+    command: ["bash", "-c", "[[ -f $HOME/.local/state/omarchy/toggles/bar-off ]] && echo yes || echo no"]
+    stdout: SplitParser { onRead: function(line) { root.barHidden = String(line).trim() === "yes" } }
+  }
+  FileView {
+    path: root.home + "/.local/state/omarchy/toggles"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: barHiddenProbe.running = true
+  }
+
   IpcHandler {
-    target: "island"
+    target: "omarchy.bar"
+
+    function syncHidden(): void {
+      barHiddenProbe.running = true
+    }
 
     function toggle(): string {
-      root.manualReveal = !root.manualReveal
-      return root.manualReveal ? "revealed" : "hidden"
+      root.barHidden = !root.barHidden
+      return root.barHidden ? "hidden" : "revealed"
     }
 
     function show(): string {
-      root.manualReveal = true
+      root.barHidden = false
       return "revealed"
     }
 
     function hide(): string {
-      root.manualReveal = false
+      root.barHidden = true
+      root.closeMenu()
+      return "hidden"
+    }
+
+    function ping(): string {
+      return "ok"
+    }
+  }
+
+  IpcHandler {
+    target: "island"
+
+    function syncHidden(): void {
+      barHiddenProbe.running = true
+    }
+
+    function toggle(): string {
+      root.barHidden = !root.barHidden
+      return root.barHidden ? "hidden" : "revealed"
+    }
+
+    function show(): string {
+      root.barHidden = false
+      return "revealed"
+    }
+
+    function hide(): string {
+      root.barHidden = true
       root.closeMenu()
       return "hidden"
     }
@@ -283,24 +331,32 @@ Item {
         root.toggleStylePreset()
       }
       return root.leftIslandAttach === "left" && root.rightIslandAttach === "right" ? "edge" : "island"
+    }
+
+    function ping(): string {
+      return "ok"
     }
   }
 
   IpcHandler {
     target: "gustavo.bar"
 
+    function syncHidden(): void {
+      barHiddenProbe.running = true
+    }
+
     function toggle(): string {
-      root.manualReveal = !root.manualReveal
-      return root.manualReveal ? "revealed" : "hidden"
+      root.barHidden = !root.barHidden
+      return root.barHidden ? "hidden" : "revealed"
     }
 
     function show(): string {
-      root.manualReveal = true
+      root.barHidden = false
       return "revealed"
     }
 
     function hide(): string {
-      root.manualReveal = false
+      root.barHidden = true
       root.closeMenu()
       return "hidden"
     }
@@ -322,6 +378,10 @@ Item {
         root.toggleStylePreset()
       }
       return root.leftIslandAttach === "left" && root.rightIslandAttach === "right" ? "edge" : "island"
+    }
+
+    function ping(): string {
+      return "ok"
     }
   }
 
@@ -1612,8 +1672,8 @@ Item {
     readonly property bool isDragActive: (root.barDragSource !== null && root.sameWindow(root.barDragWindow, barWindow)) || root.barMoveActive
 
     visible: !remapGuard.remapping
-    exclusionMode: ExclusionMode.Normal
-    WlrLayershell.exclusiveZone: root.islandHeight
+    exclusionMode: root.barHidden ? ExclusionMode.Ignore : ExclusionMode.Normal
+    WlrLayershell.exclusiveZone: root.barHidden ? 0 : root.islandHeight
     color: "transparent"
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "omarchy-bar"
@@ -1623,6 +1683,10 @@ Item {
       top: true
       left: true
       right: true
+    }
+
+    margins {
+      top: root.barHidden ? -(root.islandHeight + 20) : 0
     }
 
     implicitHeight: root.islandHeight + 12
@@ -1943,6 +2007,10 @@ Item {
       bottom: centerWindow.isExpanded
       left: true
       right: true
+    }
+
+    margins {
+      top: (root.barHidden && !centerWindow.isExpanded) ? -200 : 0
     }
 
     implicitHeight: centerWindow.isExpanded ? (screen ? screen.height : 0) : Math.ceil(centerIslandItem.implicitHeight + 8)
