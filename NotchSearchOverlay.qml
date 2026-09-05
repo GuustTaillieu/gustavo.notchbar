@@ -35,6 +35,16 @@ PanelWindow {
     }
   }
 
+  Connections {
+    target: (root && root.shell) ? root.shell.appLibrary : null
+    ignoreUnknownSignals: true
+    function onAppsChanged() {
+      if (appList && root && root.shell && root.shell.appLibrary) {
+        appList.model = root.shell.appLibrary.sortedEntries(searchInput.text)
+      }
+    }
+  }
+
   // Full-screen click-outside dismissal scrim
   MouseArea {
     anchors.fill: parent

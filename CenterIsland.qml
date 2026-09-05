@@ -493,6 +493,16 @@ Item {
     if (centerIsland.isMenuOpen) centerIsland.rebuildDisplay()
   }
 
+  Connections {
+    target: (root && root.shell) ? root.shell.appLibrary : null
+    ignoreUnknownSignals: true
+    function onAppsChanged() {
+      if (centerIsland.providersLoaded["apps"]) {
+        centerIsland.mergeAppRows()
+      }
+    }
+  }
+
   function startProviderForMenu(id) {
     var entry = MenuModel.item(centerIsland.items, id)
     if (!entry || !entry.provider || centerIsland.providersLoaded[id]) return
