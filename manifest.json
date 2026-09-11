@@ -2,14 +2,16 @@
   "schemaVersion": 1,
   "id": "gustavo.notchbar",
   "name": "Notch Island",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Gustavo",
   "description": "Dynamic-Island & Notch style status bar for Omarchy with edge snapping, responsive islands, and interactive launcher",
   "kinds": [
-    "bar"
+    "bar",
+    "menu"
   ],
   "entryPoints": {
-    "bar": "Bar.qml"
+    "bar": "Bar.qml",
+    "menu": "companion/gustavo.menu/Menu.qml"
   },
   "omarchy": {
     "clonedFrom": "omarchy.bar"

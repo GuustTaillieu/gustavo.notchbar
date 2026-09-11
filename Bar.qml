@@ -333,6 +333,31 @@ Item {
       return root.leftIslandAttach === "left" && root.rightIslandAttach === "right" ? "edge" : "island"
     }
 
+    function showNotification(payloadJson: string): string {
+      try {
+        var payload = JSON.parse(payloadJson || "{}")
+        root.showNotificationData(payload)
+        return "ok"
+      } catch (e) {
+        return "error: " + e
+      }
+    }
+
+    function openHistory(): string {
+      root.openHistory()
+      return "ok"
+    }
+
+    function closeHistory(): string {
+      root.closeHistory()
+      return "ok"
+    }
+
+    function toggleHistory(): string {
+      root.toggleHistory()
+      return "ok"
+    }
+
     function ping(): string {
       return "ok"
     }
@@ -378,6 +403,31 @@ Item {
         root.toggleStylePreset()
       }
       return root.leftIslandAttach === "left" && root.rightIslandAttach === "right" ? "edge" : "island"
+    }
+
+    function showNotification(payloadJson: string): string {
+      try {
+        var payload = JSON.parse(payloadJson || "{}")
+        root.showNotificationData(payload)
+        return "ok"
+      } catch (e) {
+        return "error: " + e
+      }
+    }
+
+    function openHistory(): string {
+      root.openHistory()
+      return "ok"
+    }
+
+    function closeHistory(): string {
+      root.closeHistory()
+      return "ok"
+    }
+
+    function toggleHistory(): string {
+      root.toggleHistory()
+      return "ok"
     }
 
     function ping(): string {
@@ -1010,27 +1060,16 @@ Item {
     dismissNotification()
   }
 
-  readonly property var notifService: shell ? shell.serviceFor("omarchy.notifications") : null
+  // In Omarchy 4.3+, shell is a capability-scoped PluginShellApi.
+  // We resolve the root ShellRoot from the scene hierarchy if panelLoaders is not directly exposed.
+  readonly property var hostShell: (shell && shell.panelLoaders) ? shell
+    : (root.parent && root.parent.parent && root.parent.parent.panelLoaders ? root.parent.parent : null)
+
+  readonly property var notifService: hostShell && typeof hostShell.serviceFor === "function"
+    ? hostShell.serviceFor("omarchy.notifications")
+    : (shell ? (typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.notifications") : (typeof shell.serviceFor === "function" ? shell.serviceFor("omarchy.notifications") : null)) : null)
   readonly property var notifPopupModel: notifService ? notifService.popupModel : null
 
-  IpcHandler {
-    target: "gustavo.bar"
-
-    function toggleHistory(): string {
-      root.toggleHistory()
-      return "ok"
-    }
-
-    function openHistory(): string {
-      root.openHistory()
-      return "ok"
-    }
-
-    function closeHistory(): string {
-      root.closeHistory()
-      return "ok"
-    }
-  }
 
   Connections {
     target: root.notifService
@@ -1042,7 +1081,7 @@ Item {
     }
   }
 
-  readonly property var defaultMenuLoader: (shell && shell.panelLoaders) ? shell.panelLoaders["omarchy.menu"] : null
+  readonly property var defaultMenuLoader: hostShell ? hostShell.panelLoaders["omarchy.menu"] : null
   readonly property var defaultMenuItem: defaultMenuLoader ? defaultMenuLoader.item : null
 
   Connections {
@@ -1052,6 +1091,9 @@ Item {
       if (root.defaultMenuItem && root.defaultMenuItem.opened) {
         var item = root.defaultMenuItem
         item.opened = false
+        if (root.hostShell && typeof root.hostShell.hide === "function") {
+          root.hostShell.hide("omarchy.menu")
+        }
         if (item.mode === "select" || item.mode === "input") {
           var payload = {
             mode: item.mode,
@@ -1073,7 +1115,7 @@ Item {
     }
   }
 
-  readonly property var osdLoader: (shell && shell.panelLoaders) ? shell.panelLoaders["omarchy.osd"] : null
+  readonly property var osdLoader: hostShell ? hostShell.panelLoaders["omarchy.osd"] : null
   readonly property var osdItem: osdLoader ? osdLoader.item : null
 
 
@@ -1116,17 +1158,19 @@ Item {
       if (!root.isHistoryOpen) {
         for (var i = first; i <= last; i++) {
           var item = root.notifPopupModel.get(i)
-          if (item && item.originalId > 0 && root.notifService && root.notifService.liveRefs && root.notifService.liveRefs[item.originalId]) {
+          if (item && (item.summary || item.body || item.app || item.appName)) {
             root.showNotificationData(item)
           }
         }
       }
-      // Immediately clear popupModel so top-right window never renders, while archiving the files into history
-      if (root.notifService && typeof root.notifService.clearPopups === "function") {
-        root.notifService.clearPopups()
-      } else {
-        root.notifPopupModel.clear()
-      }
+      // Clear popupModel after capturing data so top-right toast never renders, while archiving the files into history
+      Qt.callLater(function() {
+        if (root.notifService && typeof root.notifService.clearPopups === "function") {
+          root.notifService.clearPopups()
+        } else if (root.notifPopupModel) {
+          root.notifPopupModel.clear()
+        }
+      })
     }
   }
 

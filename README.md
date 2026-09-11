@@ -39,34 +39,42 @@ Designed with smooth organic fillet curves that visually anchor the bar to the t
 Install directly with the Omarchy plugin manager:
 
 ```bash
-omarchy plugin add https://github.com/GuustTaillieu/gustavo.notchbar.git
+omarchy plugin add https://github.com/GuustTaillieu/gustavo.notchbar.git --enable
 ```
 
-Or clone into your plugins directory:
+Or clone manually into your plugins directory:
 
 ```bash
 git clone https://github.com/GuustTaillieu/gustavo.notchbar.git ~/.config/omarchy/plugins/gustavo.notchbar
+omarchy bar set gustavo.notchbar
 omarchy-shell shell rescanPlugins
 ```
 
-### Activate the Bar
+---
 
-Set `gustavo.notchbar` as your active bar in `~/.config/omarchy/shell.json`:
+### 🏝️ Full Center Island Integration (Menu & Notifications)
 
-```json
-{
-  "version": 1,
-  "bar": {
-    "id": "gustavo.notchbar"
-  }
-}
-```
+In Omarchy 4.3+, `gustavo.notchbar` includes companion integrations to route global application launching (`SUPER + SPACE`) and notifications directly into your Center Island notch.
 
-Or switch to it dynamically:
+To enable the companion plugins:
 
 ```bash
-omarchy bar set gustavo.notchbar
-omarchy restart shell
+# Copy companion plugins into your Omarchy plugins directory
+cp -r ~/.config/omarchy/plugins/gustavo.notchbar/companion/* ~/.config/omarchy/plugins/
+
+# Enable menu and notification routing
+omarchy plugin enable gustavo.menu gustavo.notifications
+```
+
+#### 🔄 Disabling Companion Plugins (Optional)
+If you prefer the default stock Omarchy floating menu or top-right notification toasts, you can disable either companion plugin at any time:
+
+```bash
+# Use stock Omarchy menu instead of Center Island launcher:
+omarchy plugin disable gustavo.menu
+
+# Use stock Omarchy notification popups instead of Center Island toasts:
+omarchy plugin disable gustavo.notifications
 ```
 
 ---

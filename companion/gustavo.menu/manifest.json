@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "gustavo.menu",
+  "name": "Notch Island Menu",
+  "version": "1.0.0",
+  "author": "Gustavo",
+  "description": "Dynamic island launcher for Omarchy shell",
+  "kinds": [
+    "menu"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "menu": "Menu.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.menu"
+  }
+}
