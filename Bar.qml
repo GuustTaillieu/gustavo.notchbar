@@ -33,6 +33,33 @@ Item {
   property bool isSearchOpen: false
   property bool isMenuOpen: false
   property var centerIslandRef: null
+  property var centerIslandInstances: []
+
+  function registerCenterIsland(island) {
+    if (!island) return
+    var next = centerIslandInstances.filter(function(item) { return item !== island })
+    next.push(island)
+    centerIslandInstances = next
+    root.centerIslandRef = island
+  }
+
+  function unregisterCenterIsland(island) {
+    var next = centerIslandInstances.filter(function(item) { return item !== island })
+    centerIslandInstances = next
+    root.centerIslandRef = next.length > 0 ? next[next.length - 1] : null
+  }
+
+  function activeCenterIsland() {
+    var focused = focusedScreenName()
+    for (var i = 0; i < centerIslandInstances.length; i++) {
+      var item = centerIslandInstances[i]
+      if (item && item.barWindow && item.barWindow.screen && String(item.barWindow.screen.name || "") === focused) {
+        return item
+      }
+    }
+    return root.centerIslandRef
+  }
+
   property real leftIslandX: 0
   property string leftIslandAttach: "left" // "left" | "none"
 
@@ -210,22 +237,25 @@ Item {
     root.isMenuOpen = true
     root.isSearchOpen = false
     root.isHistoryOpen = false
-    if (root.centerIslandRef) {
-      root.centerIslandRef.openRoute(route || "root")
+    var island = root.activeCenterIsland()
+    if (island) {
+      island.openRoute(route || "root")
     }
   }
 
   function closeMenu() {
     root.isMenuOpen = false
     root.isSearchOpen = false
-    if (root.centerIslandRef) {
-      root.centerIslandRef.closeMenu()
+    for (var i = 0; i < centerIslandInstances.length; i++) {
+      if (centerIslandInstances[i]) centerIslandInstances[i].closeMenu()
     }
+    if (root.centerIslandRef) root.centerIslandRef.closeMenu()
   }
 
   function toggleMenu(route) {
-    if (root.centerIslandRef) {
-      root.centerIslandRef.toggleMenu(route || "root")
+    var island = root.activeCenterIsland()
+    if (island) {
+      island.toggleMenu(route || "root")
     } else {
       if (root.isMenuOpen) {
         root.closeMenu()
@@ -266,8 +296,9 @@ Item {
   IpcHandler {
     target: "omarchy.bar"
 
-    function syncHidden(): void {
+    function syncHidden(): string {
       barHiddenProbe.running = true
+      return "ok"
     }
 
     function toggle(): string {
@@ -294,8 +325,9 @@ Item {
   IpcHandler {
     target: "island"
 
-    function syncHidden(): void {
+    function syncHidden(): string {
       barHiddenProbe.running = true
+      return "ok"
     }
 
     function toggle(): string {
@@ -366,8 +398,9 @@ Item {
   IpcHandler {
     target: "gustavo.bar"
 
-    function syncHidden(): void {
+    function syncHidden(): string {
       barHiddenProbe.running = true
+      return "ok"
     }
 
     function toggle(): string {
@@ -436,6 +469,7 @@ Item {
   }
 
   IpcHandler {
+    id: omarchyMenuIpc
     target: "omarchy.menu"
 
     function toggle(payloadJson: string): string {
@@ -443,7 +477,8 @@ Item {
       try { payload = JSON.parse(payloadJson || "{}") } catch(e) {}
       var route = payload.menu || payload.initialMenu || "root"
       if (payload.mode === "select" || payload.mode === "input") {
-        if (root.centerIslandRef) root.centerIslandRef.openDmenu(payload)
+        var island = root.activeCenterIsland()
+        if (island) island.openDmenu(payload)
       } else {
         root.toggleMenu(route)
       }
@@ -455,7 +490,8 @@ Item {
       try { payload = JSON.parse(payloadJson || "{}") } catch(e) {}
       var route = payload.menu || payload.initialMenu || "root"
       if (payload.mode === "select" || payload.mode === "input") {
-        if (root.centerIslandRef) root.centerIslandRef.openDmenu(payload)
+        var island = root.activeCenterIsland()
+        if (island) island.openDmenu(payload)
       } else {
         root.openMenu(route)
       }
@@ -468,8 +504,33 @@ Item {
     }
 
     function refresh(): string {
-      if (root.centerIslandRef) root.centerIslandRef.refreshMenu()
+      var island = root.activeCenterIsland()
+      if (island) island.refreshMenu()
       return "ok"
+    }
+
+    function ping(): string {
+      return "ok"
+    }
+  }
+
+  IpcHandler {
+    target: "menu"
+
+    function toggle(payloadJson: string): string {
+      return omarchyMenuIpc.toggle(payloadJson)
+    }
+
+    function summon(payloadJson: string): string {
+      return omarchyMenuIpc.summon(payloadJson)
+    }
+
+    function close(): string {
+      return omarchyMenuIpc.close()
+    }
+
+    function refresh(): string {
+      return omarchyMenuIpc.refresh()
     }
 
     function ping(): string {
@@ -2147,7 +2208,14 @@ Item {
       }
 
       Component.onCompleted: {
-        if (centerWindow.barPluginRoot) centerWindow.barPluginRoot.centerIslandRef = centerIslandItem
+        if (centerWindow.barPluginRoot) {
+          centerWindow.barPluginRoot.registerCenterIsland(centerIslandItem)
+        }
+      }
+      Component.onDestruction: {
+        if (centerWindow.barPluginRoot) {
+          centerWindow.barPluginRoot.unregisterCenterIsland(centerIslandItem)
+        }
       }
     }
   }
