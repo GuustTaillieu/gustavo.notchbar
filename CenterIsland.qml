@@ -1135,15 +1135,15 @@ Item {
     contentHeight: centerIsland.targetContentHeight
 
     Behavior on color {
-      ColorAnimation { duration: 180; easing.type: Easing.OutCubic }
+      ColorAnimation { duration: 160; easing.type: Easing.OutCubic }
     }
 
     Behavior on contentWidth {
-      NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+      NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
     }
 
     Behavior on contentHeight {
-      NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+      NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
     }
 
     // Inner content area between fillets
