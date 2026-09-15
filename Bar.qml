@@ -7,6 +7,7 @@ import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 import "BarModel.js" as BarModel
+import "MenuBridge.js" as MenuBridge
 
 Item {
   id: root
@@ -32,6 +33,8 @@ Item {
   property bool manualReveal: false
   property bool isSearchOpen: false
   property bool isMenuOpen: false
+  onIsMenuOpenChanged: MenuBridge.updateOpened(root.isMenuOpen || root.isSearchOpen)
+  onIsSearchOpenChanged: MenuBridge.updateOpened(root.isMenuOpen || root.isSearchOpen)
   property var centerIslandRef: null
   property var centerIslandInstances: []
 
@@ -244,12 +247,20 @@ Item {
   }
 
   function closeMenu() {
+    if (!root.isMenuOpen && !root.isSearchOpen) return
+
     root.isMenuOpen = false
     root.isSearchOpen = false
     for (var i = 0; i < centerIslandInstances.length; i++) {
       if (centerIslandInstances[i]) centerIslandInstances[i].closeMenu()
     }
     if (root.centerIslandRef) root.centerIslandRef.closeMenu()
+    Qt.callLater(function() {
+      if (root.shell && typeof root.shell.hide === "function") {
+        try { root.shell.hide("omarchy.menu") } catch (e) {}
+        try { root.shell.hide("gustavo.menu") } catch (e) {}
+      }
+    })
   }
 
   function toggleMenu(route) {
@@ -476,13 +487,17 @@ Item {
       var payload = ({})
       try { payload = JSON.parse(payloadJson || "{}") } catch(e) {}
       var route = payload.menu || payload.initialMenu || "root"
+      if (root.isMenuOpen) {
+        root.closeMenu()
+        return "closed"
+      }
       if (payload.mode === "select" || payload.mode === "input") {
         var island = root.activeCenterIsland()
         if (island) island.openDmenu(payload)
       } else {
-        root.toggleMenu(route)
+        root.openMenu(route)
       }
-      return "ok"
+      return "opened"
     }
 
     function summon(payloadJson: string): string {
@@ -495,18 +510,42 @@ Item {
       } else {
         root.openMenu(route)
       }
-      return "ok"
+      return "opened"
     }
 
     function close(): string {
       root.closeMenu()
-      return "ok"
+      return "closed"
     }
 
     function refresh(): string {
       var island = root.activeCenterIsland()
       if (island) island.refreshMenu()
       return "ok"
+    }
+
+    function ping(): string {
+      return "ok"
+    }
+  }
+
+  IpcHandler {
+    target: "gustavo.menu"
+
+    function toggle(payloadJson: string): string {
+      return omarchyMenuIpc.toggle(payloadJson)
+    }
+
+    function summon(payloadJson: string): string {
+      return omarchyMenuIpc.summon(payloadJson)
+    }
+
+    function close(): string {
+      return omarchyMenuIpc.close()
+    }
+
+    function refresh(): string {
+      return omarchyMenuIpc.refresh()
     }
 
     function ping(): string {
@@ -1367,7 +1406,13 @@ Item {
     onTriggered: root.dismissNotification()
   }
 
-  Component.onCompleted: applyBarConfig()
+  Component.onCompleted: {
+    applyBarConfig()
+    MenuBridge.registerBar(root)
+  }
+  Component.onDestruction: {
+    MenuBridge.unregisterBar(root)
+  }
 
   // Revealing the indicators widens their section, which can slide a neighbour
   // under a stationary pointer. Collapsing on that un-hover would move it back

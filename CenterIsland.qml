@@ -23,6 +23,48 @@ Item {
   readonly property color islandForeground: (root && root.barForeground) ? root.barForeground : Color.bar.text
   readonly property color islandThemeForeground: (root && root.themeForeground) ? root.themeForeground : Color.foreground
 
+  Shortcut {
+    sequence: "Meta+Space"
+    context: Qt.ApplicationShortcut
+    enabled: centerIsland.isMenuOpen
+    onActivated: centerIsland.closeMenu()
+  }
+
+  Shortcut {
+    sequence: "Meta+Alt+Space"
+    context: Qt.ApplicationShortcut
+    enabled: centerIsland.isMenuOpen
+    onActivated: centerIsland.closeMenu()
+  }
+
+  Shortcut {
+    sequence: "Meta+Shift+K"
+    context: Qt.ApplicationShortcut
+    enabled: centerIsland.isMenuOpen
+    onActivated: centerIsland.closeMenu()
+  }
+
+  Shortcut {
+    sequence: "Meta+Ctrl+K"
+    context: Qt.ApplicationShortcut
+    enabled: centerIsland.isMenuOpen
+    onActivated: centerIsland.closeMenu()
+  }
+
+  Shortcut {
+    sequence: "Meta+K"
+    context: Qt.ApplicationShortcut
+    enabled: centerIsland.isMenuOpen
+    onActivated: centerIsland.closeMenu()
+  }
+
+  Shortcut {
+    sequence: "Meta+Escape"
+    context: Qt.ApplicationShortcut
+    enabled: centerIsland.isMenuOpen
+    onActivated: centerIsland.closeMenu()
+  }
+
   property bool isMediaOpen: false
 
   function toggleMedia() {
@@ -941,13 +983,19 @@ Item {
   }
 
   function closeMenu() {
+    if (!centerIsland.menuOpenInternal && !(root && (root.isMenuOpen || root.isSearchOpen))) {
+      return
+    }
     if (centerIsland.dmenuMode && centerIsland.requestActive) {
       centerIsland.finishRequest(null)
     }
     centerIsland.menuOpenInternal = false
     centerIsland.dmenuMode = ""
     centerIsland.filterText = ""
-    if (menuSearchInput) menuSearchInput.text = ""
+    if (menuSearchInput) {
+      menuSearchInput.text = ""
+      menuSearchInput.focus = false
+    }
     centerIsland.deleteConfirmOpen = false
     centerIsland.deleteTarget = null
     if (root) {
@@ -1844,11 +1892,19 @@ Item {
                   visible: !menuSearchInput.text && !menuSearchInput.inputMethodComposing
                 }
 
-                // Complete Keyboard Navigation & Vim (hjkl) Controls
+                Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
                   if (centerIsland.deleteConfirmOpen) {
                     if (menuDeleteConfirm.handleKey(event)) event.accepted = true
                     return
+                  }
+
+                  if ((event.modifiers & Qt.MetaModifier) || (event.modifiers & Qt.AltModifier && event.key === Qt.Key_Space)) {
+                    if (event.key === Qt.Key_Space || event.key === Qt.Key_K || event.key === Qt.Key_Escape) {
+                      centerIsland.closeMenu()
+                      event.accepted = true
+                      return
+                    }
                   }
 
                   if (event.key === Qt.Key_Delete) {
