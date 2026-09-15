@@ -1384,14 +1384,21 @@ Item {
     }
 
     if (!invoked) {
-      var app = String(notif.appName || notif.app || "").trim()
-      if (app && app !== "notify-send" && app !== "omarchy-action" && /^[\w\-.]+$/.test(app)) {
-        var path = root.omarchyPath || "/usr/share/omarchy"
-        Quickshell.execDetached([path + "/bin/omarchy-hyprland-focus-app", app])
-      }
+      root.focusNotificationTarget(notif)
     }
 
     dismissNotification()
+  }
+
+  function focusNotificationTarget(notif) {
+    if (!notif) return
+    var notifData = ({
+      app: String(notif.appName || notif.app || ""),
+      summary: String(notif.summary || ""),
+      body: String(notif.body || "")
+    })
+    var pluginDir = (root ? root.home : Quickshell.env("HOME")) + "/.config/omarchy/plugins/gustavo.notchbar"
+    Quickshell.execDetached(["python3", pluginDir + "/omarchy-notchbar-focus-notif", JSON.stringify(notifData)])
   }
 
   function dismissNotification() {

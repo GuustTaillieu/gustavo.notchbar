@@ -1071,21 +1071,21 @@ Item {
 
   readonly property real targetContentHeight: {
     switch (currentMode) {
-      case "menu":
+      case "menu": {
         if (centerIsland.dmenuMode === "input") return 76
+        var count = menuDisplayModel.count
+        if (count === 0) return 130
+        var itemsH = count * 46 - 2
+        var baseH = 74 + (centerIsland.searchDivider ? 22 : 0)
+        var neededH = baseH + itemsH
         if (centerIsland.dmenuMode !== "") {
-          var maxH = centerIsland.dmenuMaxHeight > 0 ? centerIsland.dmenuMaxHeight : 520
-          return Math.min(maxH, Math.max(150, 56 + menuDisplayModel.count * 44))
+          var maxDmenuH = centerIsland.dmenuMaxHeight > 0 ? centerIsland.dmenuMaxHeight : 540
+          return Math.min(maxDmenuH, Math.max(140, neededH))
         }
-        if (menuDisplayModel.count === 0) return 130
         var isScrollableList = centerIsland.activeMenu === "apps" || centerIsland.activeMenu === "style.font" || centerIsland.filterText.length > 0
-        if (isScrollableList) {
-          // Large app list, fonts, or search results: capped at 520px with smooth scrolling
-          return Math.min(520, Math.max(150, 56 + menuDisplayModel.count * 44 + (centerIsland.searchDivider ? 22 : 0)))
-        } else {
-          // Pure menu/submenu items (root, system, style, setup, etc.): full height without scrolling
-          return Math.min(850, Math.max(150, 56 + menuDisplayModel.count * 44 + (centerIsland.searchDivider ? 22 : 0)))
-        }
+        var maxMenuH = isScrollableList ? 540 : 850
+        return Math.min(maxMenuH, Math.max(140, neededH))
+      }
       case "history": return 400
       case "volume":
       case "brightness":
@@ -2533,10 +2533,8 @@ Item {
                       if (mouse.button === Qt.RightButton) {
                         deleteNotification(index, model.filePath)
                       } else {
-                        var app = String(model.app || model.appName || "").trim()
-                        if (app && app !== "notify-send" && app !== "omarchy-action" && /^[\w\-.]+$/.test(app)) {
-                          var omPath = (root && root.omarchyPath) ? root.omarchyPath : "/usr/share/omarchy"
-                          Quickshell.execDetached([omPath + "/bin/omarchy-hyprland-focus-app", app])
+                        if (root && typeof root.focusNotificationTarget === "function") {
+                          root.focusNotificationTarget(model)
                         }
                         deleteNotification(index, model.filePath)
                         if (root) root.closeHistory()
