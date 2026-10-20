@@ -352,7 +352,8 @@ Item {
   property int selectedIndex: 0
   property bool cursorActive: true
   property bool menuOpenInternal: false
-  readonly property bool isMenuOpen: (root && root.isMenuOpen) || menuOpenInternal || isSearchOpen
+  readonly property string screenName: (barWindow && barWindow.screen) ? String(barWindow.screen.name || "") : ""
+  readonly property bool isMenuOpen: (root ? (root.isMenuOpen && root.activeMenuScreen !== "" && root.activeMenuScreen === screenName) : menuOpenInternal) || isSearchOpen
 
   property var whenResults: ({})
   property var checkedResults: ({})
@@ -923,6 +924,8 @@ Item {
     centerIsland.cursorActive = true
     centerIsland.menuOpenInternal = true
     if (root) {
+      if (!root.activeMenuScreen) root.activeMenuScreen = centerIsland.screenName
+      root.activeMenuIsland = centerIsland
       root.isMenuOpen = true
       root.isSearchOpen = false
       root.isHistoryOpen = false
@@ -958,6 +961,8 @@ Item {
     centerIsland.cursorActive = centerIsland.dmenuMode !== "input"
     centerIsland.menuOpenInternal = true
     if (root) {
+      if (!root.activeMenuScreen) root.activeMenuScreen = centerIsland.screenName
+      root.activeMenuIsland = centerIsland
       root.isMenuOpen = true
       root.isSearchOpen = false
       root.isHistoryOpen = false
@@ -978,12 +983,16 @@ Item {
         centerIsland.openRoute(targetRoute)
       }
     } else {
-      centerIsland.openRoute(targetRoute)
+      if (root && typeof root.openMenu === "function") {
+        root.openMenu(targetRoute)
+      } else {
+        centerIsland.openRoute(targetRoute)
+      }
     }
   }
 
   function closeMenu() {
-    if (!centerIsland.menuOpenInternal && !(root && (root.isMenuOpen || root.isSearchOpen))) {
+    if (!centerIsland.menuOpenInternal && !(root && (root.activeMenuScreen === centerIsland.screenName || root.isMenuOpen || root.isSearchOpen))) {
       return
     }
     if (centerIsland.dmenuMode && centerIsland.requestActive) {
@@ -998,9 +1007,8 @@ Item {
     }
     centerIsland.deleteConfirmOpen = false
     centerIsland.deleteTarget = null
-    if (root) {
-      root.isMenuOpen = false
-      root.isSearchOpen = false
+    if (root && (root.activeMenuScreen === centerIsland.screenName || root.isMenuOpen)) {
+      root.closeMenu()
     }
   }
 
@@ -1183,15 +1191,15 @@ Item {
     contentHeight: centerIsland.targetContentHeight
 
     Behavior on color {
-      ColorAnimation { duration: 160; easing.type: Easing.OutCubic }
+      ColorAnimation { duration: centerIsland.isMenuOpen ? 135 : 95; easing.type: Easing.OutCubic }
     }
 
     Behavior on contentWidth {
-      NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+      NumberAnimation { duration: centerIsland.isMenuOpen ? 135 : 95; easing.type: Easing.OutCubic }
     }
 
     Behavior on contentHeight {
-      NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+      NumberAnimation { duration: centerIsland.isMenuOpen ? 135 : 95; easing.type: Easing.OutCubic }
     }
 
     // Inner content area between fillets
@@ -1211,7 +1219,7 @@ Item {
         opacity: centerIsland.currentMode === "clock" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 95; easing.type: Easing.OutCubic }
         }
 
         Row {
@@ -1259,7 +1267,7 @@ Item {
         opacity: centerIsland.currentMode === "date-clock" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
         }
 
         Row {
@@ -1319,7 +1327,7 @@ Item {
         opacity: centerIsland.currentMode === "media" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
         }
 
         RowLayout {
@@ -1529,7 +1537,7 @@ Item {
         opacity: centerIsland.currentMode === "volume" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
         }
 
         RowLayout {
@@ -1583,7 +1591,7 @@ Item {
         opacity: centerIsland.currentMode === "brightness" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
         }
 
         RowLayout {
@@ -1637,7 +1645,7 @@ Item {
         opacity: centerIsland.currentMode === "media-action" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
         }
 
         RowLayout {
@@ -1676,7 +1684,7 @@ Item {
         opacity: centerIsland.currentMode === "notification" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+          NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
         }
 
         RowLayout {
@@ -1794,7 +1802,7 @@ Item {
         opacity: centerIsland.currentMode === "menu" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+          NumberAnimation { duration: centerIsland.currentMode === "menu" ? 110 : 40; easing.type: Easing.OutQuad }
         }
 
         onVisibleChanged: {
@@ -2189,7 +2197,7 @@ Item {
         opacity: centerIsland.currentMode === "history" ? 1.0 : 0.0
 
         Behavior on opacity {
-          NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+          NumberAnimation { duration: centerIsland.currentMode === "history" ? 110 : 40; easing.type: Easing.OutQuad }
         }
 
         focus: centerIsland.isHistoryOpen

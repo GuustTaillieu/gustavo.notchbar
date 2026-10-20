@@ -32,6 +32,8 @@ Item {
   property bool barHidden: false
   property bool manualReveal: false
   property bool isSearchOpen: false
+  property var activeMenuIsland: null
+  property string activeMenuScreen: ""
   property bool isMenuOpen: false
   onIsMenuOpenChanged: MenuBridge.updateOpened(root.isMenuOpen || root.isSearchOpen)
   onIsSearchOpenChanged: MenuBridge.updateOpened(root.isMenuOpen || root.isSearchOpen)
@@ -47,9 +49,23 @@ Item {
   }
 
   function unregisterCenterIsland(island) {
+    if (root.activeMenuIsland === island) root.activeMenuIsland = null
     var next = centerIslandInstances.filter(function(item) { return item !== island })
     centerIslandInstances = next
     root.centerIslandRef = next.length > 0 ? next[next.length - 1] : null
+  }
+
+  function resolveActiveScreenName() {
+    var focused = focusedScreenName()
+    if (focused) return focused
+    var island = activeCenterIsland()
+    if (island && island.barWindow && island.barWindow.screen) {
+      return String(island.barWindow.screen.name || "")
+    }
+    if (centerIslandInstances.length > 0 && centerIslandInstances[0].barWindow && centerIslandInstances[0].barWindow.screen) {
+      return String(centerIslandInstances[0].barWindow.screen.name || "")
+    }
+    return ""
   }
 
   function activeCenterIsland() {
@@ -237,20 +253,28 @@ Item {
   }
 
   function openMenu(route) {
-    root.isMenuOpen = true
     root.isSearchOpen = false
     root.isHistoryOpen = false
     var island = root.activeCenterIsland()
+    root.activeMenuIsland = island
+    var screenName = root.resolveActiveScreenName()
+    if (!screenName && island && island.barWindow && island.barWindow.screen) {
+      screenName = String(island.barWindow.screen.name || "")
+    }
+    root.activeMenuScreen = screenName
+    root.isMenuOpen = true
     if (island) {
       island.openRoute(route || "root")
     }
   }
 
   function closeMenu() {
-    if (!root.isMenuOpen && !root.isSearchOpen) return
+    if (!root.isMenuOpen && !root.isSearchOpen && !root.activeMenuIsland && root.activeMenuScreen === "") return
 
     root.isMenuOpen = false
     root.isSearchOpen = false
+    root.activeMenuIsland = null
+    root.activeMenuScreen = ""
     for (var i = 0; i < centerIslandInstances.length; i++) {
       if (centerIslandInstances[i]) centerIslandInstances[i].closeMenu()
     }
@@ -264,15 +288,15 @@ Item {
   }
 
   function toggleMenu(route) {
-    var island = root.activeCenterIsland()
-    if (island) {
-      island.toggleMenu(route || "root")
-    } else {
-      if (root.isMenuOpen) {
-        root.closeMenu()
+    if (root.isMenuOpen || root.activeMenuIsland) {
+      var island = root.activeCenterIsland()
+      if (island && island === root.activeMenuIsland && route && route !== "root" && island.activeMenu !== route) {
+        island.openRoute(route)
       } else {
-        root.openMenu(route || "root")
+        root.closeMenu()
       }
+    } else {
+      root.openMenu(route || "root")
     }
   }
 
@@ -487,12 +511,14 @@ Item {
       var payload = ({})
       try { payload = JSON.parse(payloadJson || "{}") } catch(e) {}
       var route = payload.menu || payload.initialMenu || "root"
-      if (root.isMenuOpen) {
+      if (root.isMenuOpen || root.activeMenuIsland) {
         root.closeMenu()
         return "closed"
       }
       if (payload.mode === "select" || payload.mode === "input") {
         var island = root.activeCenterIsland()
+        root.activeMenuIsland = island
+        root.isMenuOpen = true
         if (island) island.openDmenu(payload)
       } else {
         root.openMenu(route)
@@ -506,6 +532,8 @@ Item {
       var route = payload.menu || payload.initialMenu || "root"
       if (payload.mode === "select" || payload.mode === "input") {
         var island = root.activeCenterIsland()
+        root.activeMenuIsland = island
+        root.isMenuOpen = true
         if (island) island.openDmenu(payload)
       } else {
         root.openMenu(route)
@@ -1236,16 +1264,24 @@ Item {
         // Instantly suppress default center popup so it never renders
         root.osdItem.opened = false
 
-        if (root.centerIslandRef && typeof root.centerIslandRef.handleExternalOsd === "function") {
-          root.centerIslandRef.handleExternalOsd({
-            iconKey: key,
-            message: msg,
-            value: val,
-            maxValue: maxV,
-            hasProgress: prog,
-            mediaOsd: med,
-            icon: ic
-          })
+        var osdData = {
+          iconKey: key,
+          message: msg,
+          value: val,
+          maxValue: maxV,
+          hasProgress: prog,
+          mediaOsd: med,
+          icon: ic
+        }
+
+        for (var i = 0; i < root.centerIslandInstances.length; i++) {
+          var targetIsland = root.centerIslandInstances[i]
+          if (targetIsland && typeof targetIsland.handleExternalOsd === "function") {
+            targetIsland.handleExternalOsd(osdData)
+          }
+        }
+        if (root.centerIslandInstances.length === 0 && root.centerIslandRef && typeof root.centerIslandRef.handleExternalOsd === "function") {
+          root.centerIslandRef.handleExternalOsd(osdData)
         }
       }
     }
@@ -2145,11 +2181,48 @@ Item {
     id: centerWindow
 
     property var barPluginRoot: null
+    readonly property string screenName: screen ? String(screen.name || "") : ""
     readonly property bool isSearchOpen: barPluginRoot ? barPluginRoot.isSearchOpen : false
-    readonly property bool isMenuOpen: barPluginRoot ? barPluginRoot.isMenuOpen : false
+    readonly property bool isMenuOpen: barPluginRoot ? (barPluginRoot.isMenuOpen && barPluginRoot.activeMenuScreen !== "" && barPluginRoot.activeMenuScreen === screenName) : false
     readonly property bool isHistoryOpen: barPluginRoot ? barPluginRoot.isHistoryOpen : false
-    readonly property bool isExpanded: isSearchOpen || isMenuOpen || isHistoryOpen
-    readonly property bool isIdle: centerIslandItem ? (centerIslandItem.currentMode === "clock") : true
+    property bool isClosing: false
+    readonly property bool isExpanded: isSearchOpen || isMenuOpen || isHistoryOpen || isClosing
+    readonly property bool isIdle: !isExpanded && (centerIslandItem ? (centerIslandItem.currentMode === "clock" && centerIslandItem.height <= 44) : true)
+
+    Timer {
+      id: closingStabilizerTimer
+      interval: 105
+      repeat: false
+      onTriggered: {
+        centerWindow.isClosing = false
+      }
+    }
+
+    onIsMenuOpenChanged: {
+      if (!isMenuOpen) {
+        if (centerWindow.barPluginRoot) {
+          centerWindow.isClosing = true
+          closingStabilizerTimer.restart()
+        }
+      } else {
+        closingStabilizerTimer.stop()
+        centerWindow.isClosing = false
+      }
+    }
+
+    onIsSearchOpenChanged: {
+      if (!isSearchOpen && !isMenuOpen && !isHistoryOpen) {
+        centerWindow.isClosing = true
+        closingStabilizerTimer.restart()
+      }
+    }
+
+    onIsHistoryOpenChanged: {
+      if (!isHistoryOpen && !isMenuOpen && !isSearchOpen) {
+        centerWindow.isClosing = true
+        closingStabilizerTimer.restart()
+      }
+    }
 
     visible: true
     exclusionMode: ExclusionMode.Ignore
@@ -2157,7 +2230,7 @@ Item {
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "omarchy-bar-center"
     WlrLayershell.layer: isIdle ? WlrLayer.Top : WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: centerWindow.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: (centerWindow.isMenuOpen || centerWindow.isSearchOpen) ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     anchors {
       top: true
@@ -2176,7 +2249,7 @@ Item {
     MouseArea {
       id: outsideClickArea
       anchors.fill: parent
-      visible: centerWindow.isExpanded
+      visible: centerWindow.isMenuOpen || centerWindow.isSearchOpen || centerWindow.isHistoryOpen
       hoverEnabled: true
       onClicked: {
         if (centerWindow.barPluginRoot) {
@@ -2187,7 +2260,7 @@ Item {
     }
 
     mask: Region {
-      item: centerWindow.isExpanded ? centerWindow.contentItem : centerIslandItem
+      item: (centerWindow.isMenuOpen || centerWindow.isSearchOpen || centerWindow.isHistoryOpen) ? centerWindow.contentItem : centerIslandItem
     }
 
     CenterIsland {

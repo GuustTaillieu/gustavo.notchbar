@@ -50,6 +50,10 @@ function openMenu(payloadJson) {
     var route = payload.menu || payload.initialMenu || "root";
     if (payload.mode === "select" || payload.mode === "input") {
       var island = typeof barInstance.activeCenterIsland === "function" ? barInstance.activeCenterIsland() : barInstance.centerIslandRef;
+      if (barInstance) {
+        barInstance.activeMenuIsland = island;
+        barInstance.isMenuOpen = true;
+      }
       if (island) island.openDmenu(payload);
     } else {
       barInstance.openMenu(route);
