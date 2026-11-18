@@ -8,6 +8,7 @@ import qs.Commons
 import qs.Ui
 import "BarModel.js" as BarModel
 import "MenuBridge.js" as MenuBridge
+import "NotificationBridge.js" as NotificationBridge
 
 Item {
   id: root
@@ -1193,10 +1194,12 @@ Item {
   readonly property var hostShell: (shell && shell.panelLoaders) ? shell
     : (root.parent && root.parent.parent && root.parent.parent.panelLoaders ? root.parent.parent : null)
 
-  readonly property var notifService: hostShell && typeof hostShell.serviceFor === "function"
-    ? hostShell.serviceFor("omarchy.notifications")
-    : (shell ? (typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.notifications") : (typeof shell.serviceFor === "function" ? shell.serviceFor("omarchy.notifications") : null)) : null)
-  readonly property var notifPopupModel: notifService ? notifService.popupModel : null
+  property var bridgedNotifService: NotificationBridge.getService()
+  readonly property var notifService: bridgedNotifService ? bridgedNotifService
+    : (hostShell && typeof hostShell.serviceFor === "function"
+      ? hostShell.serviceFor("omarchy.notifications")
+      : (shell ? (typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.notifications") : (typeof shell.serviceFor === "function" ? shell.serviceFor("omarchy.notifications") : null)) : null))
+  readonly property var notifPopupModel: notifService ? (notifService.toasts || notifService.popupModel || null) : null
 
 
   Connections {
@@ -1288,10 +1291,10 @@ Item {
   }
 
   Connections {
-    target: root.notifPopupModel
+    target: root.notifPopupModel || null
     ignoreUnknownSignals: true
     function onRowsInserted(parent, first, last) {
-      if (!root.isHistoryOpen) {
+      if (!root.isHistoryOpen && root.notifPopupModel) {
         for (var i = first; i <= last; i++) {
           var item = root.notifPopupModel.get(i)
           if (item && (item.summary || item.body || item.app || item.appName)) {
@@ -1299,20 +1302,63 @@ Item {
           }
         }
       }
-      // Clear popupModel after capturing data so top-right toast never renders, while archiving the files into history
-      Qt.callLater(function() {
-        if (root.notifService && typeof root.notifService.clearPopups === "function") {
-          root.notifService.clearPopups()
-        } else if (root.notifPopupModel) {
-          root.notifPopupModel.clear()
-        }
-      })
+      // If the notification service does not suppress the floating deck itself, clear the popups
+      if (!root.notifService || !root.notifService.suppressFloatingDeck) {
+        Qt.callLater(function() {
+          if (root.notifService && typeof root.notifService.clearPopups === "function") {
+            root.notifService.clearPopups()
+          } else if (root.notifPopupModel) {
+            root.notifPopupModel.clear()
+          }
+        })
+      }
     }
   }
 
+  property string _lastNotifKey: ""
+  property double _lastNotifTime: 0
+
   function showNotificationData(data) {
     if (!data) return
+    var keyStr = String(data.key || data.originalId || data.id || "")
+    var now = Date.now()
+    if (keyStr && root._lastNotifKey === keyStr && (now - root._lastNotifTime) < 500) {
+      return
+    }
+    root._lastNotifKey = keyStr
+    root._lastNotifTime = now
+
+    var parsedExecActions = []
+    if (data.execActions) {
+      if (Array.isArray(data.execActions)) {
+        parsedExecActions = data.execActions
+      } else {
+        try { parsedExecActions = JSON.parse(data.execActions) } catch (e) { parsedExecActions = [] }
+      }
+    }
+    var parsedExecArgv = null
+    if (data.execArgv) {
+      if (Array.isArray(data.execArgv)) {
+        parsedExecArgv = data.execArgv
+      } else {
+        try { parsedExecArgv = JSON.parse(data.execArgv) } catch (e) { parsedExecArgv = null }
+      }
+    }
+
+    var senderActions = []
+    if (Array.isArray(data.actions)) {
+      senderActions = data.actions
+    } else if (data.key) {
+      var bridgeActions = NotificationBridge.actionsOf(data.key)
+      if (bridgeActions && bridgeActions.length > 0) {
+        senderActions = bridgeActions
+      } else if (root.notifService && typeof root.notifService.actionsOf === "function") {
+        senderActions = root.notifService.actionsOf(data.key, root.notifService.refsRevision)
+      }
+    }
+
     root.currentNotification = {
+      key: String(data.key || data.originalId || data.id || ""),
       id: data.id || 0,
       originalId: data.originalId || 0,
       app: String(data.app || data.appName || "").slice(0, 100),
@@ -1322,11 +1368,17 @@ Item {
       body: String(data.body || "").slice(0, 1000),
       image: String(data.image || "").slice(0, 300),
       glyph: String(data.glyph || "").slice(0, 20),
+      code: String(data.code || "").trim(),
+      codes: String(data.codes || data.code || "").trim(),
+      execActions: parsedExecActions,
+      execArgv: parsedExecArgv,
+      actions: senderActions,
+      link: String(data.link || ""),
       expireTimeout: data.expireTimeout || 0
     }
 
     var expireMs = Number(data.expireTimeout || 0)
-    if (!isFinite(expireMs) || expireMs <= 0) expireMs = 5000
+    if (!isFinite(expireMs) || expireMs <= 0) expireMs = 6000
     else expireMs = Math.min(30000, Math.max(3000, expireMs))
     rootNotificationTimer.interval = expireMs
     rootNotificationTimer.restart()
@@ -1394,33 +1446,150 @@ Item {
     }
   }
 
+  function copyNotificationCode(code) {
+    if (!code) return
+    var notif = root.currentNotification
+    if (NotificationBridge.copyCode(code, notif ? notif.key : "")) {
+      return
+    }
+    if (root.notifService && typeof root.notifService.copyCode === "function" && notif && notif.key) {
+      root.notifService.copyCode(code, notif.key)
+    } else {
+      Quickshell.execDetached(["wl-copy", code])
+    }
+  }
+
+  function toCleanArgv(val) {
+    if (!val) return null
+    if (typeof val === "string") {
+      try { val = JSON.parse(val) } catch(e) { return null }
+    }
+    if (val && typeof val === "object" && typeof val.length === "number" && val.length > 0) {
+      var out = []
+      for (var i = 0; i < val.length; i++) {
+        out.push(String(val[i]))
+      }
+      return out.length > 0 ? out : null
+    }
+    return null
+  }
+
+  function executeArgv(argv) {
+    var cleanArgs = toCleanArgv(argv)
+    if (!cleanArgs || cleanArgs.length === 0) return false
+
+    // Run via login shell so PATH and full desktop session environment are available
+    try {
+      var shellCmd = ["bash", "-lc", 'exec "$@"', "bash"].concat(cleanArgs)
+      Quickshell.execDetached(shellCmd)
+      return true
+    } catch (e) {
+      console.warn("execArgv via bash failed, trying direct execDetached:", e)
+      try {
+        Quickshell.execDetached(cleanArgs)
+        return true
+      } catch (e2) {
+        console.warn("execArgv direct failed:", e2)
+      }
+    }
+    return false
+  }
+
+  function invokeNotificationExec(index, actionObj) {
+    var notif = root.currentNotification
+    var targetArgv = null
+
+    if (actionObj && actionObj.argv) {
+      targetArgv = toCleanArgv(actionObj.argv)
+    }
+    if (!targetArgv && notif && notif.execActions && notif.execActions[index]) {
+      var act = notif.execActions[index]
+      targetArgv = toCleanArgv(act.argv || act)
+    }
+
+    if (targetArgv) {
+      executeArgv(targetArgv)
+    } else if (notif && notif.key) {
+      if (NotificationBridge.runExecAction(notif.key, index)) {
+        // Handled via bridge
+      } else if (root.notifService && typeof root.notifService.runExecAction === "function") {
+        root.notifService.runExecAction(notif.key, index)
+      }
+    }
+
+    dismissNotification()
+  }
+
+  function invokeNotificationActionId(identifier) {
+    var notif = root.currentNotification
+    if (notif && notif.key && NotificationBridge.invokeAction(notif.key, identifier)) {
+      dismissNotification()
+      return
+    }
+    if (root.notifService && typeof root.notifService.invokeAction === "function" && notif && notif.key) {
+      root.notifService.invokeAction(notif.key, identifier)
+    } else {
+      invokeNotificationAction()
+    }
+    dismissNotification()
+  }
+
   function invokeNotificationAction() {
     var notif = root.currentNotification
     if (!notif) return
 
-    var invoked = false
-    try {
-      if (root.notifService && root.notifService.liveRefs) {
-        var live = root.notifService.liveRefs[notif.originalId]
+    var handled = false
+
+    // 1. Explicit execArgv (from --exec or default action of omarchy-notification-send)
+    if (notif.execArgv) {
+      var cleanExec = toCleanArgv(notif.execArgv)
+      if (cleanExec) {
+        handled = executeArgv(cleanExec)
+      }
+    }
+
+    // 2. If notification has execActions (e.g. Open/Edit) but no explicit execArgv, the first action is the default action
+    if (!handled && notif.execActions) {
+      var firstAction = notif.execActions[0]
+      if (firstAction) {
+        var cleanFirst = toCleanArgv(firstAction.argv || firstAction)
+        if (cleanFirst) {
+          handled = executeArgv(cleanFirst)
+        }
+      }
+    }
+
+    // 3. Sender D-Bus "default" action (check live refs specifically for an action named "default")
+    if (!handled) {
+      try {
+        var refs = (root.notifService && (root.notifService.refs || root.notifService.liveRefs)) || null
+        var live = refs ? (refs[notif.key] || refs[notif.originalId]) : null
         if (live && live.actions && live.actions.length > 0) {
           for (var a = 0; a < live.actions.length; a++) {
             var act = live.actions[a]
-            if (act && (act.identifier === "default" || a === 0)) {
+            if (act && String(act.identifier) === "default") {
               if (typeof act.invoke === "function") {
                 act.invoke()
-                invoked = true
+                handled = true
                 break
               }
             }
           }
         }
+      } catch (e) {
+        console.warn("Notification D-Bus default action invoke error:", e)
       }
-    } catch (e) {
-      console.warn("Notification action invoke error:", e)
     }
 
-    if (!invoked) {
-      root.focusNotificationTarget(notif)
+    // 4. Focus target window / application or open web link
+    if (!handled) {
+      if (notif.link && (notif.link.indexOf("http://") === 0 || notif.link.indexOf("https://") === 0)) {
+        Qt.openUrlExternally(notif.link)
+        handled = true
+      } else {
+        root.focusNotificationTarget(notif)
+        handled = true
+      }
     }
 
     dismissNotification()
@@ -1439,6 +1608,13 @@ Item {
 
   function dismissNotification() {
     rootNotificationTimer.stop()
+    var notif = root.currentNotification
+    if (notif && notif.key) {
+      NotificationBridge.dismissNotification(notif.key)
+      if (root.notifService && typeof root.notifService.closeToast === "function") {
+        root.notifService.closeToast(notif.key, "dismissed", true)
+      }
+    }
     root.currentNotification = null
   }
 
@@ -1452,9 +1628,11 @@ Item {
   Component.onCompleted: {
     applyBarConfig()
     MenuBridge.registerBar(root)
+    NotificationBridge.registerBar(root)
   }
   Component.onDestruction: {
     MenuBridge.unregisterBar(root)
+    NotificationBridge.unregisterBar(root)
   }
 
   // Revealing the indicators widens their section, which can slide a neighbour

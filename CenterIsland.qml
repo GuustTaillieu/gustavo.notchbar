@@ -19,7 +19,7 @@ Item {
 
   readonly property bool isSearchOpen: root ? root.isSearchOpen : false
   readonly property bool isHistoryOpen: root ? root.isHistoryOpen : false
-  readonly property bool isFullscreen: root ? root.isFullscreenActive : false
+  readonly property bool isFullscreen: (root && root.isFullscreenActive) ? true : false
   readonly property color islandForeground: (root && root.barForeground) ? root.barForeground : Color.bar.text
   readonly property color islandThemeForeground: (root && root.themeForeground) ? root.themeForeground : Color.foreground
 
@@ -357,7 +357,12 @@ Item {
 
   property var whenResults: ({})
   property var checkedResults: ({})
+  property var disabledResults: ({})
   property bool guardsPending: false
+
+  property string language: "en"
+  property var menuCatalog: ({})
+  readonly property string languagePath: Quickshell.env("OMARCHY_LANGUAGE_FILE") || ((Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/language")
 
   property var providersLoaded: ({})
   property var providerQueue: []
@@ -389,6 +394,18 @@ Item {
       script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
       icon: "\udb81\udc0b",
       actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+    },
+    "kernels": {
+      script: "current=$(omarchy-kernel get 2>/dev/null); omarchy-kernel list 2>/dev/null | while read -r k; do [[ -z $k ]] && continue; printf '%s\\t%s\\t%s\\n' \"$k\" \"$k\" \"$current\"; done",
+      icon: "\uf17c",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-kernel set " + Util.shellQuote(value) }
+    },
+    "languages": {
+      script: "current=$(omarchy-language 2>/dev/null); omarchy-language list 2>/dev/null | while IFS=$'\\t' read -r name code english; do [[ -z $code ]] && continue; printf '%s\\t%s\\t%s\\t%s\\n' \"$name\" \"$code\" \"$current\" \"$english\"; done",
+      icon: "\uf1ab",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-language " + Util.shellQuote(value) }
     }
   })
 
@@ -398,7 +415,7 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: {
-      centerIsland.defaultMenuItems = MenuModel.parseMenuJsonc(text())
+      centerIsland.defaultMenuItems = MenuModel.keepMenuRows(centerIsland.defaultMenuItems, text(), true)
       centerIsland.rebuildItemsFromSources()
     }
     onFileChanged: reload()
@@ -410,7 +427,7 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: {
-      centerIsland.userMenuItems = MenuModel.parseMenuJsonc(text())
+      centerIsland.userMenuItems = MenuModel.keepMenuRows(centerIsland.userMenuItems, text(), false)
       centerIsland.rebuildItemsFromSources()
     }
     onLoadFailed: {
@@ -420,15 +437,60 @@ Item {
     onFileChanged: reload()
   }
 
-  function rebuildItemsFromSources() {
-    var merged = MenuModel.mergeMenuSources(centerIsland.defaultMenuItems, centerIsland.userMenuItems)
+  FileView {
+    id: languageFile
+    path: centerIsland.languagePath
+    watchChanges: true
+    printErrors: false
+    onLoaded: centerIsland.setLanguage(text())
+    onLoadFailed: centerIsland.setLanguage("")
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: menuCatalogFile
+    path: (root && root.omarchyPath ? root.omarchyPath : "/usr/share/omarchy") + "/default/i18n/" + centerIsland.language + "/menu.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      centerIsland.menuCatalog = centerIsland.parseCatalog(text())
+      centerIsland.rebuildItemsFromSources(true)
+    }
+    onLoadFailed: {
+      centerIsland.menuCatalog = ({})
+      centerIsland.rebuildItemsFromSources(true)
+    }
+    onFileChanged: reload()
+  }
+
+  function parseCatalog(raw) {
+    try {
+      var parsed = JSON.parse(raw || "{}")
+      return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : ({})
+    } catch (e) {
+      return ({})
+    }
+  }
+
+  function setLanguage(raw) {
+    var code = String(raw || "").trim()
+    if (!/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(code)) code = "en"
+    if (centerIsland.language === code) return
+    centerIsland.language = code
+    menuCatalogFile.reload()
+  }
+
+  function rebuildItemsFromSources(skipGuards) {
+    var translatedDefaults = MenuModel.applyTranslations(centerIsland.defaultMenuItems, centerIsland.menuCatalog)
+    var rootCatalog = centerIsland.menuCatalog ? centerIsland.menuCatalog.root : null
+    var merged = MenuModel.mergeMenuSources(translatedDefaults, centerIsland.userMenuItems, rootCatalog && rootCatalog.label)
     centerIsland.providerRevision += 1
     centerIsland.providersLoaded = ({})
     centerIsland.providerQueue = []
     centerIsland.items = merged.items
     centerIsland.itemOrder = merged.itemOrder
     centerIsland.rowsLoaded = true
-    centerIsland.evaluateGuards()
+    if (!skipGuards) centerIsland.evaluateGuards()
     if (centerIsland.isMenuOpen) {
       centerIsland.rebuildDisplay()
       if (!centerIsland.dmenuMode) {
@@ -436,6 +498,14 @@ Item {
         else centerIsland.loadProviderForMenu(centerIsland.activeMenu)
       }
     }
+  }
+
+  function refreshMenu() {
+    defaultMenuFile.reload()
+    userMenuFile.reload()
+    languageFile.reload()
+    menuCatalogFile.reload()
+    return "ok"
   }
 
   function evaluateGuards() {
@@ -449,6 +519,7 @@ Item {
     if (!script) {
       centerIsland.whenResults = ({})
       centerIsland.checkedResults = ({})
+      centerIsland.disabledResults = ({})
       return
     }
     guardProc.collected = ""
@@ -474,6 +545,7 @@ Item {
 
       var nextWhen = ({})
       var nextChecked = ({})
+      var nextDisabled = ({})
       var lines = guardProc.collected.split("\n")
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim()
@@ -488,9 +560,11 @@ Item {
         var tag = rest.substring(tagAt + 1)
         if (tag === "w") nextWhen[id] = value
         else if (tag === "c") nextChecked[id] = value
+        else if (tag === "d") nextDisabled[id] = value
       }
       centerIsland.whenResults = nextWhen
       centerIsland.checkedResults = nextChecked
+      centerIsland.disabledResults = nextDisabled
       if (centerIsland.isMenuOpen) centerIsland.rebuildDisplay()
       if (centerIsland.guardsPending) Qt.callLater(function() { centerIsland.evaluateGuards() })
     }
@@ -524,8 +598,10 @@ Item {
         action: "",
         provider: "",
         aliases: aliases,
+        searchTerms: [],
         when: "",
         checked: "",
+        disabled: "",
         order: 0
       })
     }
@@ -577,7 +653,8 @@ Item {
       var line = lines[i].trim()
       if (!line) continue
       var parts = line.split("\t")
-      var label = String(parts[0] || "").slice(0, 200)
+      var rawLabel = String(parts[0] || "").slice(0, 200)
+      var label = spec.labelFor ? spec.labelFor(rawLabel) : rawLabel
       var value = String(parts[1] || parts[0] || "").slice(0, 200)
       var current = String(parts[2] || "").slice(0, 200)
       if (!label) continue
@@ -597,8 +674,10 @@ Item {
         action: spec.actionFor(value),
         provider: "",
         aliases: [],
+        searchTerms: (parts[3] ? [parts[3]] : []).concat(label !== rawLabel ? [rawLabel] : []),
         when: "",
         checked: "",
+        disabled: "",
         order: 0
       })
     }
@@ -733,10 +812,12 @@ Item {
         var entry = MenuModel.item(centerIsland.items, centerIsland.itemOrder[i])
         if (!entry || entry.id === "root") continue
         if (!MenuModel.isDescendantOf(centerIsland.items, entry.id, active)) continue
-        if (!MenuModel.matchesQuery(entry, query, MenuModel.isVisible(centerIsland.items, centerIsland.itemOrder, centerIsland.whenResults, entry))) continue
+        var isVis = MenuModel.isVisible(centerIsland.items, centerIsland.itemOrder, centerIsland.whenResults, entry)
+        var isDis = MenuModel.isDisabled(centerIsland.disabledResults, entry)
+        if (!MenuModel.matchesQuery(entry, query, isVis && !isDis)) continue
 
         var detail = MenuModel.parentPathFor(centerIsland.items, entry.id)
-        var row = MenuModel.displayRow(centerIsland.items, centerIsland.itemOrder, centerIsland.checkedResults, entry, detail, MenuModel.searchScore(centerIsland.items, entry, query))
+        var row = MenuModel.displayRow(centerIsland.items, centerIsland.itemOrder, centerIsland.checkedResults, centerIsland.disabledResults, entry, detail, MenuModel.searchScore(centerIsland.items, entry, query))
         if (entry.parent === active) currentRows.push(row)
         else drilldownRows.push(row)
       }
@@ -758,7 +839,7 @@ Item {
         var child = MenuModel.item(centerIsland.items, centerIsland.itemOrder[j])
         if (!child || child.parent !== active) continue
         if (!MenuModel.isVisible(centerIsland.items, centerIsland.itemOrder, centerIsland.whenResults, child)) continue
-        rows.push(MenuModel.displayRow(centerIsland.items, centerIsland.itemOrder, centerIsland.checkedResults, child, child.description, child.order))
+        rows.push(MenuModel.displayRow(centerIsland.items, centerIsland.itemOrder, centerIsland.checkedResults, centerIsland.disabledResults, child, child.description, child.order))
       }
 
       if (active === "apps") {
@@ -778,10 +859,35 @@ Item {
     centerIsland.clampSelectedIndex()
   }
 
+  function rowSelectable(index) {
+    if (index < 0 || index >= menuDisplayModel.count) return false
+    var item = menuDisplayModel.get(index)
+    return item && !item.disabled
+  }
+
+  function nextSelectable(from, direction) {
+    var count = menuDisplayModel.count
+    if (count === 0) return -1
+    var step = direction >= 0 ? 1 : -1
+    for (var i = 1; i <= count; i++) {
+      var candidate = (from + i * step + count * count) % count
+      if (rowSelectable(candidate)) return candidate
+    }
+    return -1
+  }
+
   function clampSelectedIndex() {
-    if (menuDisplayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= menuDisplayModel.count) selectedIndex = menuDisplayModel.count - 1
+    if (menuDisplayModel.count === 0) {
+      selectedIndex = 0
+      return
+    }
+    if (selectedIndex >= menuDisplayModel.count) selectedIndex = menuDisplayModel.count - 1
     else if (selectedIndex < 0) selectedIndex = 0
+
+    if (!rowSelectable(selectedIndex)) {
+      var next = nextSelectable(selectedIndex, 1)
+      if (next !== -1) selectedIndex = next
+    }
 
     Qt.callLater(function() {
       if (menuDisplayModel.count > 0 && menuListView) {
@@ -793,8 +899,11 @@ Item {
   function select(delta) {
     if (menuDisplayModel.count === 0) return
     centerIsland.cursorActive = true
-    centerIsland.selectedIndex = (centerIsland.selectedIndex + delta + menuDisplayModel.count) % menuDisplayModel.count
-    if (menuListView) menuListView.positionViewAtIndex(centerIsland.selectedIndex, ListView.Contain)
+    var next = nextSelectable(centerIsland.selectedIndex, delta)
+    if (next !== -1) {
+      centerIsland.selectedIndex = next
+      if (menuListView) menuListView.positionViewAtIndex(centerIsland.selectedIndex, ListView.Contain)
+    }
   }
 
   function setFilter(text) {
@@ -858,6 +967,7 @@ Item {
 
     if (index < 0 || index >= menuDisplayModel.count) return
     var row = menuDisplayModel.get(index)
+    if (row.disabled) return
     if (row.kind === "menu" || row.kind === "link") {
       centerIsland.setActiveMenu(row.target || row.itemId, true)
     } else if (row.kind === "app") {
@@ -875,6 +985,10 @@ Item {
   function applySelected(id, action) {
     centerIsland.closeMenu()
     if (action) {
+      var summon = MenuModel.summonAction(action)
+      if (summon && root && root.shell && typeof root.shell.summon === "function" && root.shell.summon(summon.id, summon.payload)) {
+        return
+      }
       Util.execDetached(action)
     }
   }
@@ -909,6 +1023,10 @@ Item {
     var entry = MenuModel.item(centerIsland.items, id)
     if (entry && entry.kind === "action" && entry.action) {
       centerIsland.closeMenu()
+      var summon = MenuModel.summonAction(entry.action)
+      if (summon && root && root.shell && typeof root.shell.summon === "function" && root.shell.summon(summon.id, summon.payload)) {
+        return "ok"
+      }
       Util.execDetached(entry.action)
       return "ok"
     }
@@ -1012,12 +1130,6 @@ Item {
     }
   }
 
-  function refreshMenu() {
-    defaultMenuFile.reload()
-    userMenuFile.reload()
-    return "ok"
-  }
-
   function requestDeleteSelected() {
     if (centerIsland.selectedIndex < 0 || centerIsland.selectedIndex >= menuDisplayModel.count) return
     var row = menuDisplayModel.get(centerIsland.selectedIndex)
@@ -1062,15 +1174,26 @@ Item {
         if (centerIsland.dmenuMode !== "") {
           return centerIsland.dmenuWidth > 0 ? centerIsland.dmenuWidth : 600
         }
-        if (centerIsland.filterText.length > 0 || centerIsland.activeMenu === "style.font" || centerIsland.activeMenu === "trigger.capture.screenrecord" || centerIsland.activeMenu === "apps") {
-          return 500
+        var isWide = centerIsland.filterText.length > 0 ||
+                     centerIsland.activeMenu === "appearance.font" ||
+                     centerIsland.activeMenu === "style.font" ||
+                     centerIsland.activeMenu === "trigger.capture.screenrecord" ||
+                     centerIsland.activeMenu === "apps" ||
+                     centerIsland.activeMenu === "update.kernel" ||
+                     centerIsland.activeMenu === "setup.language" ||
+                     (centerIsland.items[centerIsland.activeMenu] && centerIsland.items[centerIsland.activeMenu].provider)
+        if (isWide) {
+          return 520
         }
         return 340
       case "history": return 480
       case "volume":
       case "brightness": return 300
       case "media-action": return Math.min(360, Math.max(180, mediaActionRow.implicitWidth + 32))
-      case "notification": return 400
+      case "notification": {
+        var hasDeeds = currentNotification && (currentNotification.code || (currentNotification.execActions && currentNotification.execActions.length > 0) || (currentNotification.actions && currentNotification.actions.length > 0))
+        return hasDeeds ? 460 : 400
+      }
       case "media": return 440
       case "date-clock": return Math.max(230, centerModulesWidth + 24)
       case "clock": default: return Math.max(90, (centerModulesWidth > 0 ? centerModulesWidth : 70) + 20)
@@ -1090,7 +1213,14 @@ Item {
           var maxDmenuH = centerIsland.dmenuMaxHeight > 0 ? centerIsland.dmenuMaxHeight : 540
           return Math.min(maxDmenuH, Math.max(140, neededH))
         }
-        var isScrollableList = centerIsland.activeMenu === "apps" || centerIsland.activeMenu === "style.font" || centerIsland.filterText.length > 0
+        var isScrollableList = centerIsland.activeMenu === "apps" ||
+                               centerIsland.activeMenu === "appearance.font" ||
+                               centerIsland.activeMenu === "style.font" ||
+                               centerIsland.activeMenu === "update.kernel" ||
+                               centerIsland.activeMenu === "setup.language" ||
+                               (centerIsland.items[centerIsland.activeMenu] && centerIsland.items[centerIsland.activeMenu].provider) ||
+                               centerIsland.filterText.length > 0 ||
+                               count > 8
         var maxMenuH = isScrollableList ? 540 : 850
         return Math.min(maxMenuH, Math.max(140, neededH))
       }
@@ -1098,7 +1228,10 @@ Item {
       case "volume":
       case "brightness":
       case "media-action": return 36
-      case "notification": return 68
+      case "notification": {
+        var hasDeeds = currentNotification && (currentNotification.code || (currentNotification.execActions && currentNotification.execActions.length > 0) || (currentNotification.actions && currentNotification.actions.length > 0))
+        return hasDeeds ? 74 : 68
+      }
       case "media": return 80
       case "date-clock": return 40
       case "clock": default: return 30
@@ -1116,7 +1249,7 @@ Item {
 
   Process {
     id: historyLoaderProc
-    command: ["timeout", "3s", "python3", "-c", "import os, stat, json\nhdir = os.path.expanduser('~/.local/state/omarchy/notifications')\nMAX_FILES = 120\nMAX_BYTES = 65536\nMAX_TOTAL = 100\nMAX_OUT = 262144\n\ndef scan(d):\n    if not os.path.isdir(d): return []\n    out = []\n    try:\n        names = sorted(os.listdir(d), reverse=True)\n    except: return []\n    for name in names:\n        if not name.endswith('.json') or len(out) >= MAX_FILES: break\n        p = os.path.join(d, name)\n        fd = None\n        try:\n            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)\n            fd = os.open(p, flags)\n            st = os.fstat(fd)\n            if not stat.S_ISREG(st.st_mode) or st.st_size <= 0 or st.st_size > MAX_BYTES:\n                continue\n            with os.fdopen(fd, 'r', encoding='utf-8', errors='replace') as fp:\n                fd = None\n                raw = fp.read(MAX_BYTES)\n                data = json.loads(raw)\n                if isinstance(data, dict):\n                    data['_p'] = p\n                    data['_mt'] = int(st.st_mtime * 1000)\n                    out.append(data)\n        except: pass\n        finally:\n            if fd is not None:\n                try: os.close(fd)\n                except: pass\n    return out\n\nentries = scan(hdir) + scan(os.path.join(hdir, 'history'))\nseen = set()\nres = []\nfor d in entries:\n    raw_app = str(d.get('appName') or d.get('app') or '')[:100]\n    raw_sum = str(d.get('summary') or '')[:300]\n    raw_body = str(d.get('body') or '')[:1000]\n    raw_icon = str(d.get('appIcon') or '')[:300]\n    raw_img = str(d.get('image') or '')[:300]\n    raw_glyph = str(d.get('glyph') or '')[:20]\n    fpath = d.get('_p', '')\n    try: ts = int(d.get('timestamp') or d.get('_mt') or 0)\n    except: ts = 0\n    k = str(d.get('id', '')) + '-' + str(ts) + '-' + raw_sum\n    if k not in seen:\n        seen.add(k)\n        res.append({'id': d.get('id', 0), 'timestamp': ts, 'app': raw_app, 'appName': raw_app, 'appIcon': raw_icon, 'summary': raw_sum, 'body': raw_body, 'image': raw_img, 'glyph': raw_glyph, 'filePath': fpath})\n    if len(res) >= MAX_TOTAL: break\n\nres.sort(key=lambda x: x.get('timestamp', 0), reverse=True)\npayload = json.dumps(res[:MAX_TOTAL])\nif len(payload) <= MAX_OUT: print(payload)\nelse: print('[]')\n"]
+    command: ["timeout", "3s", "python3", "-c", "import os, stat, json\nhdir = os.path.expanduser('~/.local/state/omarchy/notifications')\nMAX_FILES = 120\nMAX_BYTES = 262144\nMAX_TOTAL = 100\nMAX_OUT = 262144\n\ndef scan(d):\n    if not os.path.isdir(d): return []\n    out = []\n    try:\n        names = sorted(os.listdir(d), reverse=True)\n    except: return []\n    for name in names:\n        if not name.endswith('.json') or len(out) >= MAX_FILES: break\n        p = os.path.join(d, name)\n        fd = None\n        try:\n            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)\n            fd = os.open(p, flags)\n            st = os.fstat(fd)\n            if not stat.S_ISREG(st.st_mode) or st.st_size <= 0 or st.st_size > MAX_BYTES:\n                continue\n            with os.fdopen(fd, 'r', encoding='utf-8', errors='replace') as fp:\n                fd = None\n                raw = fp.read(MAX_BYTES)\n                data = json.loads(raw)\n                if isinstance(data, dict):\n                    data['_p'] = p\n                    t = data.get('ts') or data.get('timestamp') or (st.st_mtime * 1000)\n                    if t < 10000000000: t = t * 1000\n                    data['_mt'] = int(t)\n                    out.append(data)\n                elif isinstance(data, list):\n                    for item in data:\n                        if isinstance(item, dict):\n                            item['_p'] = p\n                            t = item.get('ts') or item.get('closed_ts') or (st.st_mtime * 1000)\n                            if t < 10000000000: t = t * 1000\n                            item['_mt'] = int(t)\n                            out.append(item)\n        except: pass\n        finally:\n            if fd is not None:\n                try: os.close(fd)\n                except: pass\n    return out\n\nentries = scan(hdir) + scan(os.path.join(hdir, 'history'))\nseen = set()\nres = []\nfor d in entries:\n    raw_app = str(d.get('appName') or d.get('app') or '')[:100]\n    raw_sum = str(d.get('summary') or '')[:300]\n    raw_body = str(d.get('body') or '')[:1000]\n    raw_icon = str(d.get('appIcon') or '')[:300]\n    raw_img = str(d.get('image') or '')[:300]\n    raw_glyph = str(d.get('glyph') or '')[:20]\n    fpath = d.get('_p', '')\n    try: ts = int(d.get('timestamp') or d.get('_mt') or 0)\n    except: ts = 0\n    notif_id = str(d.get('key') or d.get('originalId') or d.get('id', ''))\n    k = notif_id + '-' + str(ts) + '-' + raw_sum\n    if k not in seen:\n        seen.add(k)\n        res.append({'id': notif_id, 'timestamp': ts, 'app': raw_app, 'appName': raw_app, 'appIcon': raw_icon, 'summary': raw_sum, 'body': raw_body, 'image': raw_img, 'glyph': raw_glyph, 'filePath': fpath})\n    if len(res) >= MAX_TOTAL: break\n\nres.sort(key=lambda x: x.get('timestamp', 0), reverse=True)\npayload = json.dumps(res[:MAX_TOTAL])\nif len(payload) <= MAX_OUT: print(payload)\nelse: print('[]')\n"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -1690,6 +1823,7 @@ Item {
         RowLayout {
           anchors.fill: parent
           spacing: Style.space(12)
+          z: 2
 
           // Dynamic Icon Box
           Rectangle {
@@ -1697,7 +1831,7 @@ Item {
             Layout.preferredHeight: 38
             radius: 10
             color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.15)
-            clip: true
+            clip: false
 
             readonly property string iconSrc: centerIsland.resolveIconSource(centerIsland.currentNotification)
             readonly property string glyphText: centerIsland.resolveGlyph(centerIsland.currentNotification)
@@ -1731,6 +1865,32 @@ Item {
               font.family: Style.font.family
               font.pixelSize: 18
               color: centerIsland.islandForeground
+            }
+
+            // Stack badge if multiple notifications are queued
+            Rectangle {
+              id: stackBadge
+              readonly property int notifCount: root && root.notifService && root.notifService.toasts ? root.notifService.toasts.count : 0
+              visible: notifCount > 1
+              anchors.bottom: parent.bottom
+              anchors.right: parent.right
+              anchors.bottomMargin: -3
+              anchors.rightMargin: -3
+              width: 18
+              height: 18
+              radius: 9
+              color: Color.accent || centerIsland.islandForeground
+              border.width: 1.5
+              border.color: Color.bar.background
+
+              Text {
+                anchors.centerIn: parent
+                text: "+" + String(stackBadge.notifCount - 1)
+                font.family: Style.font.family
+                font.pixelSize: 9
+                font.weight: Font.Bold
+                color: Color.bar.background
+              }
             }
           }
 
@@ -1776,9 +1936,160 @@ Item {
               visible: text !== ""
             }
           }
+
+          // ----------------------------------------------------------- Interactive Deeds Row (Verification Codes & Actions)
+          RowLayout {
+            id: notificationDeedsRow
+            Layout.alignment: Qt.AlignVCenter
+            spacing: Style.space(6)
+            visible: hasCode || hasExecActions || hasSenderActions
+
+            property bool codeCopied: false
+            property string notifCode: centerIsland.currentNotification ? (centerIsland.currentNotification.code || "") : ""
+            property bool hasCode: notifCode !== ""
+            property var execActionsList: centerIsland.currentNotification && centerIsland.currentNotification.execActions ? centerIsland.currentNotification.execActions : []
+            property bool hasExecActions: execActionsList.length > 0
+            property var senderActionsList: centerIsland.currentNotification && centerIsland.currentNotification.actions ? centerIsland.currentNotification.actions : []
+            property bool hasSenderActions: !hasExecActions && senderActionsList.length > 0
+
+            Timer {
+              id: codeCopiedResetTimer
+              interval: 1800
+              onTriggered: notificationDeedsRow.codeCopied = false
+            }
+
+            // 1. Verification Code Quick-Copy Button (OTP / 2FA)
+            Rectangle {
+              visible: notificationDeedsRow.hasCode
+              Layout.preferredHeight: 28
+              implicitWidth: codeRow.implicitWidth + 16
+              radius: 14
+              color: notificationDeedsRow.codeCopied
+                ? Qt.rgba(0.2, 0.8, 0.4, 0.25)
+                : (codeHover.hovered ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.24)
+                                     : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.12))
+              border.width: 1
+              border.color: notificationDeedsRow.codeCopied ? Qt.rgba(0.2, 0.8, 0.4, 0.6) : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
+
+              RowLayout {
+                id: codeRow
+                anchors.centerIn: parent
+                spacing: 4
+
+                Text {
+                  text: notificationDeedsRow.codeCopied ? "󰄬" : "󰆏"
+                  font.family: Style.font.family
+                  font.pixelSize: 12
+                  color: notificationDeedsRow.codeCopied ? "#4ade80" : (Color.accent || centerIsland.islandForeground)
+                }
+
+                Text {
+                  text: notificationDeedsRow.codeCopied ? "Copied" : ("Copy " + notificationDeedsRow.notifCode)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.weight: Font.DemiBold
+                  color: centerIsland.islandForeground
+                }
+              }
+
+              HoverHandler { id: codeHover }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  if (root && typeof root.copyNotificationCode === "function") {
+                    root.copyNotificationCode(notificationDeedsRow.notifCode)
+                  }
+                  notificationDeedsRow.codeCopied = true
+                  codeCopiedResetTimer.restart()
+                }
+              }
+            }
+
+            // 2. Omarchy Exec Actions (Screenshot "Open" / "Edit", Screen Recording "Cut", etc.)
+            Repeater {
+              model: notificationDeedsRow.execActionsList
+              delegate: Rectangle {
+                required property var modelData
+                required property int index
+                Layout.preferredHeight: 28
+                implicitWidth: execLabel.implicitWidth + 16
+                radius: 14
+                color: execHover.hovered
+                  ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.24)
+                  : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.12)
+                border.width: 1
+                border.color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
+
+                Text {
+                  id: execLabel
+                  anchors.centerIn: parent
+                  text: String(modelData.label || "Action")
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.weight: Font.DemiBold
+                  color: centerIsland.islandForeground
+                }
+
+                HoverHandler { id: execHover }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    var r = centerIsland.root || root
+                    if (r && typeof r.invokeNotificationExec === "function") {
+                      r.invokeNotificationExec(index, modelData)
+                    }
+                  }
+                }
+              }
+            }
+
+            // 3. Sender D-Bus Actions
+            Repeater {
+              model: notificationDeedsRow.hasExecActions ? [] : notificationDeedsRow.senderActionsList
+              delegate: Rectangle {
+                required property var modelData
+                Layout.preferredHeight: 28
+                implicitWidth: actLabel.implicitWidth + 16
+                radius: 14
+                color: actHover.hovered
+                  ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.24)
+                  : Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.12)
+                border.width: 1
+                border.color: Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.18)
+
+                Text {
+                  id: actLabel
+                  anchors.centerIn: parent
+                  text: String(modelData.text || modelData.label || "Action")
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.weight: Font.DemiBold
+                  color: centerIsland.islandForeground
+                }
+
+                HoverHandler { id: actHover }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    var r = centerIsland.root || root
+                    if (r && typeof r.invokeNotificationActionId === "function") {
+                      r.invokeNotificationActionId(modelData.id || modelData.identifier || "default")
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
 
         MouseArea {
+          z: 1
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
@@ -2030,6 +2341,7 @@ Item {
                 height: 44
                 radius: 6
                 color: isSelected ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.16) : (itemMouse.containsMouse ? Qt.rgba(centerIsland.islandThemeForeground.r, centerIsland.islandThemeForeground.g, centerIsland.islandThemeForeground.b, 0.07) : "transparent")
+                opacity: model.disabled ? 0.4 : 1.0
 
                 readonly property bool isSelected: centerIsland.cursorActive && centerIsland.selectedIndex === index
                 readonly property bool isMenuOrLink: model.kind === "menu" || model.kind === "link"
@@ -2073,7 +2385,7 @@ Item {
 
                       Text {
                         anchors.centerIn: parent
-                        text: model.icon ? model.icon : (menuItemRow.isMenuOrLink ? "󰅂" : "󰒓")
+                        text: model.icon ? model.icon : (menuItemRow.isMenuOrLink ? "󰅂" : "󱒓")
                         font.family: model.iconFont ? model.iconFont : Style.font.family
                         font.pixelSize: 15
                         color: menuItemRow.isSelected ? (Color.accent || centerIsland.islandForeground) : centerIsland.islandForeground
@@ -2126,12 +2438,15 @@ Item {
                   id: itemMouse
                   anchors.fill: parent
                   hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
+                  cursorShape: model.disabled ? Qt.ArrowCursor : Qt.PointingHandCursor
                   onEntered: {
-                    centerIsland.cursorActive = true
-                    centerIsland.selectedIndex = index
+                    if (!model.disabled) {
+                      centerIsland.cursorActive = true
+                      centerIsland.selectedIndex = index
+                    }
                   }
                   onClicked: {
+                    if (model.disabled) return
                     centerIsland.cursorActive = true
                     centerIsland.selectedIndex = index
                     centerIsland.activateIndex(index)
@@ -2287,7 +2602,7 @@ Item {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                  Quickshell.execDetached(["python3", "-c", "import os, glob; [os.unlink(p) for d in ['~/.local/state/omarchy/notifications', '~/.local/state/omarchy/notifications/history'] for p in glob.glob(os.path.expanduser(d)+'/*.json') if os.path.isfile(p) and not os.path.islink(p)]"])
+                  Quickshell.execDetached(["python3", "-c", "import os, glob; [os.unlink(p) for d in ['~/.local/state/omarchy/notifications', '~/.local/state/omarchy/notifications/history'] for p in glob.glob(os.path.expanduser(d)+'/*.json') if os.path.isfile(p) and not os.path.islink(p) and not p.endswith(('live.json', 'history.json', 'quiet.json'))]; [open(os.path.expanduser(p), 'w').write('[]') for p in ['~/.local/state/omarchy/notifications/history.json', '~/.local/state/omarchy/notifications/live.json'] if os.path.exists(os.path.expanduser(p))]"])
                   historyModel.clear()
                 }
               }
@@ -2554,7 +2869,10 @@ Item {
                 function deleteNotification(idx, filePath) {
                   if (filePath && typeof filePath === "string") {
                     var hdir = (root ? root.home : Quickshell.env("HOME")) + "/.local/state/omarchy/notifications"
-                    if ((filePath.indexOf(hdir + "/") === 0) && filePath.indexOf("..") === -1 && filePath.slice(-5) === ".json") {
+                    if (filePath.endsWith("history.json") || filePath.endsWith("live.json")) {
+                      var targetKey = historyModel.get(idx) ? String(historyModel.get(idx).id || "") : ""
+                      Quickshell.execDetached(["python3", "-c", "import json, os, sys\np = sys.argv[1]\nk = sys.argv[2]\nif os.path.isfile(p):\n  try:\n    with open(p, 'r') as f: data = json.load(f)\n    if isinstance(data, list):\n      data = [x for x in data if str(x.get('key') or x.get('originalId') or x.get('id') or '') != k]\n      with open(p, 'w') as f: json.dump(data, f)\n  except: pass", filePath, targetKey])
+                    } else if ((filePath.indexOf(hdir + "/") === 0) && filePath.indexOf("..") === -1 && filePath.slice(-5) === ".json") {
                       Quickshell.execDetached(["rm", "-f", "--", filePath])
                     }
                   }

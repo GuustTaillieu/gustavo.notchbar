@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "gustavo.notifications",
   "name": "Notch Island Notifications",
-  "version": "1.0.0",
-  "author": "Omarchy",
+  "version": "1.2.0",
+  "author": "Gustavo",
   "description": "Notification daemon, popups, DND, and history",
   "kinds": [
     "service"

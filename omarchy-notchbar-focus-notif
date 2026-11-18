@@ -69,9 +69,13 @@ if target:
     ws_name = str(target.get("workspace", {}).get("name") or "")
     if ws_name.startswith("special:"):
         special_name = ws_name.split(":", 1)[1]
-        subprocess.run(["hyprctl", "dispatch", f"hl.dsp.special_workspace({{ name = \"{special_name}\" }})"], timeout=1)
+        subprocess.run(["hyprctl", "dispatch", f"hl.dsp.special_workspace({{ name = \"{special_name}\" }})"], capture_output=True, timeout=1)
+        subprocess.run(["hyprctl", "dispatch", "togglespecialworkspace", special_name], capture_output=True, timeout=1)
     
     cmd_lua = f"hl.dsp.focus({{ window = \"address:{addr}\" }})"
-    res = subprocess.run(["hyprctl", "dispatch", cmd_lua], capture_output=True, timeout=1)
-    if res.returncode != 0:
+    res = subprocess.run(["hyprctl", "dispatch", cmd_lua], capture_output=True, text=True, timeout=1)
+    out = (res.stdout or "") + (res.stderr or "")
+    if res.returncode != 0 or any(err in out.lower() for err in ("invalid", "error", "not found", "unknown")):
         subprocess.run(["hyprctl", "dispatch", "focuswindow", f"address:{addr}"], timeout=1)
+elif app and app.lower() not in ("notify-send", "omarchy-action", "omarchy", ""):
+    subprocess.run(["omarchy-hyprland-focus-app", app], timeout=1)
